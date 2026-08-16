@@ -1,63 +1,30 @@
-# Titanium Market
+# TITANIUM MARKET
 
-Готовый проект Titanium Market: Vue 3 + Vite + Express + SQLite.
+Cloudflare version migrated to a standard Node.js/Vue deployment while preserving the original UI, API routes, moderation panel, admin sessions, categories, reports, logs and test data.
 
-## Запуск в VS Code
+## Local
+
+Requirements: Node.js 24+.
 
 ```powershell
-npm install
-npm run dev
+npm.cmd install
+npm.cmd run build
+npm.cmd start
 ```
 
-Для локальной разработки открой `http://localhost:5173`.
+Open `http://localhost:3000`.
 
-## Production / Northflank
+## Northflank
 
-Build command:
+Use GitHub repository and **Buildpack**.
 
-```text
-npm install && npm run build
-```
+- Build command: `npm run build`
+- Start command: `npm start`
+- Public port: `3000` (HTTP)
+- Environment: `PORT=3000`
 
-Start command:
+Northflank can use the default `$PORT`; the server listens on `0.0.0.0`.
 
-```text
-npm start
-```
+## Admin accounts
 
-Приложение слушает `0.0.0.0:$PORT`, поэтому Northflank сможет прокинуть HTTP-трафик на сервис.
-
-## Админка
-
-По умолчанию:
-
-```text
-Логин: admin
-Пароль: 123456
-```
-
-Перед публичным запуском обязательно задай `ADMIN_USERNAME` и `ADMIN_PASSWORD` в Environment Variables Northflank.
-
-## Что уже есть
-
-- каталог объявлений;
-- поиск;
-- фильтрация по категориям;
-- создание объявления;
-- очередь модерации;
-- вход в Панель СМИ;
-- одобрение / отклонение / архивирование;
-- редактирование и удаление объявлений через API;
-- жалобы;
-- журнал модерации;
-- SQLite-база, создаваемая автоматически;
-- 60 тестовых объявлений при первом запуске;
-- `/api/health` для проверки состояния сервиса.
-
-## Важно
-
-В проекте оставлен `legacy-worker.ts` только как резервная копия старой Cloudflare/D1-реализации. Northflank-версия работает через обычный Express + SQLite и не требует D1.
-
-
-## Node.js
-This version uses Node.js built-in `node:sqlite`; Node.js 22.5+ is required. No native SQLite npm addon is required.
+See `README_ADMIN_ACCOUNTS.txt`. Sessions use an HttpOnly 30-day cookie and PBKDF2-SHA256 with 100,000 iterations, matching the original Cloudflare implementation.

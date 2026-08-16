@@ -1,631 +1,87 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 
-type Ad = {
-  id: number;
-  title: string;
-  category: string;
-  city: string;
-  price: number;
-  seller: string;
-  contact: string;
-  description: string;
-  status?: "pending" | "approved" | "rejected";
-  createdAt: string;
-};
+type Status = "pending" | "approved" | "rejected" | "archived" | "expired";
+type Ad = { id:number; title:string; category:string; city:string; price:number; seller:string; contact:string; description:string; status:Status; createdAt:string; expiresAt?:string|null };
+type Report = { id:number; ad_id:number; reporter_nickname:string; reason:string; status:string; created_at:string; title:string };
+type Log = { id:number; ad_id:number; moderator_nickname:string; action:string; comment:string|null; created_at:string };
 
-const categories = ["Все", "Автомобили", "Недвижимость", "Работа", "Услуги", "Бизнесы", "Другое"];
-const search = ref("");
-const activeCategory = ref("Все");
-const ads = ref<Ad[]>([]);
-const loading = ref(true);
-const apiOnline = ref(false);
+const categories = ["Все","Автомобили","Недвижимость","Работа","Услуги","Бизнесы","Другое"];
+const cities = ["Все","Los Santos","San Fierro","Las Venturas"];
+const search=ref(""); const activeCategory=ref("Все"); const activeCity=ref("Все");
+const minPrice=ref(""); const maxPrice=ref(""); const sort=ref("newest");
+const ads=ref<Ad[]>([]); const loading=ref(true); const apiOnline=ref(false);
+const showRules=ref(false); const showCreate=ref(false); const showReport=ref<Ad|null>(null); const reportText=ref(""); const reportNick=ref("");
+const showMediaLogin=ref(false); const showMediaPanel=ref(false); const mediaError=ref(""); const mediaUser=ref(""); const mediaRole=ref<"admin"|"root"|"">(""); const isAdmin=ref(false); const logScope=ref("own");
+const mediaStatus=ref<Status|"all">("pending"); const mediaAds=ref<Ad[]>([]); const reports=ref<Report[]>([]); const logs=ref<Log[]>([]); const stats=ref<Record<string,number>>({});
+const editAd=ref<Ad|null>(null); const editForm=ref<any>({}); const rejectAdTarget=ref<Ad|null>(null); const rejectReason=ref("");
 
-const showCreate = ref(false);
-const showMediaLogin = ref(false);
-const showMediaPanel = ref(false);
-const mediaError = ref("");
-const mediaUser = ref("");
-const mediaAds = ref<Ad[]>([]);
+const form=ref({title:"",category:"Автомобили",city:"Los Santos",price:"",seller:"",contact:"",description:""});
+const login=ref({username:"",password:""});
 
-const form = ref({
-  title: "",
-  category: "Автомобили",
-  city: "Los Santos",
-  price: "",
-  seller: "",
-  contact: "",
-  description: ""
-});
-
-const login = ref({
-  username: "",
-  password: ""
-});
-
-const filteredAds = computed(() => {
-  const q = search.value.trim().toLowerCase();
-
-  return ads.value.filter((ad) => {
-    const categoryMatch = activeCategory.value === "Все" || ad.category === activeCategory.value;
-    const text = `${ad.title} ${ad.category} ${ad.city} ${ad.seller} ${ad.description}`.toLowerCase();
-    return categoryMatch && (!q || text.includes(q)) && ad.status !== "rejected";
+const filteredAds=computed(()=>{
+  const q=search.value.trim().toLowerCase(); const min=Number(minPrice.value)||0; const max=Number(maxPrice.value)||Infinity;
+  const result=ads.value.filter(ad=>{
+    const text=`${ad.title} ${ad.category} ${ad.city} ${ad.seller} ${ad.description}`.toLowerCase();
+    return (!q||text.includes(q)) && (activeCategory.value==="Все"||ad.category===activeCategory.value) && (activeCity.value==="Все"||ad.city===activeCity.value) && ad.price>=min && ad.price<=max;
   });
+  return result.sort((a,b)=>sort.value==="priceAsc"?a.price-b.price:sort.value==="priceDesc"?b.price-a.price:b.id-a.id);
 });
+const pendingAds=computed(()=>mediaStatus.value==="all"?mediaAds.value:mediaAds.value.filter(a=>a.status===mediaStatus.value));
 
-const pendingAds = computed(() =>
-  mediaAds.value.filter((ad) => ad.status === "pending")
-);
-
-function money(value: number) {
-  if (!value) return "Договорная";
-  return `${new Intl.NumberFormat("ru-RU").format(value)} $`;
-}
-
-async function loadAds() {
-  loading.value = true;
-
-  try {
-    const response = await fetch("/api/ads");
-    const data = await response.json();
-    ads.value = data.ads ?? [];
-    apiOnline.value = response.ok;
-  } catch {
-    apiOnline.value = false;
-    ads.value = [];
-  } finally {
-    loading.value = false;
-  }
-}
-
-async function createAd() {
-  if (!form.value.title || !form.value.seller || !form.value.contact) return;
-
-  const response = await fetch("/api/ads", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      ...form.value,
-      price: Number(form.value.price || 0)
-    })
-  });
-
-  if (response.ok) {
-    // The API stores a new ad as `pending`. Do not add it to the
-    // public `ads` list here: that list contains only approved ads.
-    // The ad will appear publicly only after media moderation.
-    await response.json();
-
-    showCreate.value = false;
-
-    // Keep the public list in sync with D1. Pending ads are intentionally
-    // excluded by GET /api/ads until a moderator approves them.
-    await loadAds();
-
-    form.value = {
-      title: "",
-      category: "Автомобили",
-      city: "Los Santos",
-      price: "",
-      seller: "",
-      contact: "",
-      description: ""
-    };
-
-    alert("Объявление отправлено на проверку СМИ.");
-  }
-}
-
-function openMediaLogin() {
-  mediaError.value = "";
-  showMediaLogin.value = true;
-}
-
-async function loadMediaAds() {
-  const response = await fetch("/api/media/ads?status=pending");
-
-  if (!response.ok) {
-    throw new Error("Не удалось загрузить очередь модерации.");
-  }
-
-  const data = await response.json();
-
-  mediaAds.value = (data.ads ?? []).map((ad: Ad) => ({
-    ...ad,
-    status: "pending"
-  }));
-}
-
-async function mediaLogin() {
-  mediaError.value = "";
-
-  try {
-    const response = await fetch("/api/media/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(login.value)
-    });
-
-    if (!response.ok) {
-      mediaError.value = "Неверный логин или пароль.";
-      return;
-    }
-
-    const data = await response.json();
-
-    mediaUser.value = data.user.nickname;
-    showMediaLogin.value = false;
-    showMediaPanel.value = true;
-    login.value = { username: "", password: "" };
-
-    await loadMediaAds();
-  } catch {
-    mediaError.value = "Не удалось подключиться к серверу.";
-  }
-}
-
-async function moderateAd(ad: Ad, action: "approve" | "reject") {
-  try {
-    const response = await fetch(`/api/media/ads/${ad.id}/${action}`, {
-      method: "POST"
-    });
-
-    if (!response.ok) {
-      const data = await response.json().catch(() => null);
-      alert(data?.error ?? "Не удалось изменить статус объявления.");
-      return;
-    }
-
-    // Сначала обновляем очередь из D1.
-    await loadMediaAds();
-
-    // Затем обновляем публичный список.
-    await loadAds();
-  } catch {
-    alert("Не удалось подключиться к серверу.");
-  }
-}
-
-async function approveAd(ad: Ad) {
-  await moderateAd(ad, "approve");
-}
-
-async function rejectAd(ad: Ad) {
-  await moderateAd(ad, "reject");
-}
-
-async function logoutMedia() {
-  try { await fetch("/api/media/logout", { method: "POST" }); } catch {}
-  showMediaPanel.value = false;
-  mediaUser.value = "";
-  mediaAds.value = [];
-}
-
-onMounted(loadAds);
+function money(v:number){return v?`${new Intl.NumberFormat("ru-RU").format(v)} $`:"Договорная";}
+async function loadAds(){loading.value=true;try{const r=await fetch("/api/ads");const d=await r.json();ads.value=d.ads??[];apiOnline.value=r.ok;}catch{apiOnline.value=false;ads.value=[];}finally{loading.value=false;}}
+async function checkSession(openPanel=false){try{const r=await fetch("/api/media/me");const d=await r.json();if(d.authenticated){mediaUser.value=d.user.nickname;mediaRole.value=d.user.role;isAdmin.value=true;if(openPanel){showMediaPanel.value=true;await loadMedia();}}else{isAdmin.value=false;mediaUser.value="";mediaRole.value="";}}catch{isAdmin.value=false;}}
+async function createAd(){if(!form.value.title||!form.value.seller||!form.value.contact)return;const r=await fetch("/api/ads",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({...form.value,price:Number(form.value.price||0)})});if(r.ok){showCreate.value=false;form.value={title:"",category:"Автомобили",city:"Los Santos",price:"",seller:"",contact:"",description:""};await loadAds();alert("Объявление отправлено на проверку СМИ.");}}
+async function openMediaLogin(){mediaError.value="";if(isAdmin.value){showMediaPanel.value=true;localStorage.setItem("tm_media_panel","1");await loadMedia();return;}await checkSession(false);if(isAdmin.value){showMediaPanel.value=true;localStorage.setItem("tm_media_panel","1");await loadMedia();}else showMediaLogin.value=true;}
+function collapseMediaPanel(){showMediaPanel.value=false;localStorage.removeItem("tm_media_panel");}
+async function loadMedia(){const [a,s,r,l]=await Promise.all([fetch(`/api/media/ads?status=${mediaStatus.value==='all'?'pending':mediaStatus.value}`),fetch("/api/media/stats"),fetch("/api/media/reports"),fetch("/api/media/logs")]);if([a,s,r,l].some(x=>x.status===401)){isAdmin.value=false;showMediaPanel.value=false;openMediaLogin();return;}mediaAds.value=(await a.json()).ads??[];stats.value=await s.json();reports.value=(await r.json()).reports??[];const logData=await l.json();logs.value=logData.logs??[];logScope.value=logData.scope??"own";}
+async function mediaLogin(){mediaError.value="";try{const r=await fetch("/api/media/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(login.value)});const d=await r.json().catch(()=>null);if(!r.ok){mediaError.value=d?.error||"Неверный логин или пароль.";return;}mediaUser.value=d.user.nickname;mediaRole.value=d.user.role;isAdmin.value=true;showMediaLogin.value=false;showMediaPanel.value=true;login.value={username:"",password:""};localStorage.setItem("tm_media_panel","1");await loadMedia();}catch{mediaError.value="Не удалось подключиться к серверу.";}}
+async function setMediaStatus(status:Status|"all"){mediaStatus.value=status;await loadMedia();}
+async function action(id:number,action:"approve"|"archive",body:any={}){const r=await fetch(`/api/media/ads/${id}/${action}`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});if(!r.ok){alert((await r.json().catch(()=>null))?.error||"Ошибка");return;}await loadMedia();await loadAds();}
+async function approve(ad:Ad){await action(ad.id,"approve");}
+function openReject(ad:Ad){rejectAdTarget.value=ad;rejectReason.value="";}
+async function reject(){if(!rejectAdTarget.value||!rejectReason.value.trim())return;await action(rejectAdTarget.value.id,"reject",{reason:rejectReason.value});rejectAdTarget.value=null;}
+async function archive(ad:Ad){if(confirm("Снять это объявление с публикации?"))await action(ad.id,"archive");}
+function openEdit(ad:Ad){editAd.value=ad;editForm.value={title:ad.title,category:ad.category,city:ad.city,price:ad.price,contact:ad.contact,description:ad.description};}
+async function saveEdit(){if(!editAd.value)return;const r=await fetch(`/api/media/ads/${editAd.value.id}`,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify(editForm.value)});if(!r.ok){alert((await r.json().catch(()=>null))?.error||"Не удалось сохранить");return;}editAd.value=null;await loadMedia();await loadAds();}
+async function deleteAd(ad:Ad){if(!confirm(`Удалить объявление «${ad.title}» навсегда?`))return;const r=await fetch(`/api/media/ads/${ad.id}`,{method:"DELETE"});const d=await r.json().catch(()=>null);if(!r.ok){alert(d?.error||"Не удалось удалить объявление");return;}await loadAds();if(showMediaPanel.value)await loadMedia();}
+async function reportAd(){if(!showReport.value||!reportText.value.trim())return;const r=await fetch("/api/ads/report",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({adId:showReport.value.id,reporter:reportNick.value||"Аноним",reason:reportText.value})});if(r.ok){showReport.value=null;reportText.value="";reportNick.value="";alert("Жалоба отправлена в СМИ.");}else alert((await r.json().catch(()=>null))?.error||"Ошибка");}
+async function resolveReport(id:number,action:"resolve"|"dismiss"){await fetch("/api/media/reports/resolve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id,action})});await loadMedia();}
+async function logoutMedia(){await fetch("/api/media/logout",{method:"POST"}).catch(()=>{});showMediaPanel.value=false;showMediaLogin.value=false;mediaUser.value="";mediaRole.value="";isAdmin.value=false;mediaAds.value=[];localStorage.removeItem("tm_media_panel");}
+onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&localStorage.getItem("tm_media_panel")==="1"){showMediaPanel.value=true;await loadMedia();}});
 </script>
 
 <template>
-  <div class="app-shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark">SM</div>
-        <div>
-          <div class="brand-title">TITANIUM MARKET</div>
-          <div class="brand-subtitle">Официальный маркетплейс штата</div>
-        </div>
-      </div>
+<div class="app-shell">
+<header class="topbar"><div class="brand"><div class="brand-mark"><img src="/logo.png" alt="Titanium Market"></div><div><div class="brand-title">TITANIUM MARKET</div><div class="brand-subtitle">Официальная доска объявлений штата</div></div></div>
+<div class="top-actions"><button class="media-link" @click="showRules=true">Правила</button><button class="media-link" @click="showMediaPanel?showMediaPanel=false:openMediaLogin()">Панель СМИ</button><button class="btn btn-primary" @click="showCreate=true">+ Подать объявление</button></div></header>
+<main>
+<section class="hero"><div><div class="eyebrow">ЭЛЕКТРОННАЯ ПЛОЩАДКА ШТАТА</div><h1>Найди. Купи.<br><span>Продай.</span></h1><p>Автомобили, недвижимость, работа, услуги и готовый бизнес — всё в одном месте.</p></div><div class="hero-stat"><strong>{{filteredAds.length}}</strong><span>доступных объявлений</span></div></section>
+<section class="controls"><div class="search"><span>⌕</span><input v-model="search" placeholder="Поиск по названию, нику, городу или описанию..."></div><div class="filter-row"><select v-model="activeCity"><option v-for="c in cities" :key="c">{{c}}</option></select><input v-model="minPrice" type="number" min="0" placeholder="Цена от"><input v-model="maxPrice" type="number" min="0" placeholder="Цена до"><select v-model="sort"><option value="newest">Сначала новые</option><option value="priceAsc">Сначала дешёвые</option><option value="priceDesc">Сначала дорогие</option></select></div><div class="categories"><button v-for="category in categories" :key="category" :class="{active:activeCategory===category}" @click="activeCategory=category">{{category}}</button></div></section>
+<section class="section-head"><div><div class="section-kicker">АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ</div><h2>Объявления</h2></div><span class="result-count">{{filteredAds.length}} найдено</span></section>
+<section v-if="loading" class="empty">Загружаем объявления...</section><section v-else-if="filteredAds.length" class="grid"><article v-for="ad in filteredAds" :key="ad.id" class="card"><div class="card-top"><span class="tag">{{ad.category}}</span><span class="date">{{ad.createdAt}}</span></div><h3>{{ad.title}}</h3><div class="price">{{money(ad.price)}}</div><p>{{ad.description}}</p><div class="card-bottom"><div><div class="seller">{{ad.seller}}</div><div class="city">{{ad.city}} · {{ad.contact}}</div></div><div class="card-actions"><button v-if="isAdmin" class="more admin-edit" @click="openEdit(ad)">✎</button><button v-if="isAdmin" class="more admin-delete" @click="deleteAd(ad)">×</button><button class="more" @click="showReport=ad">⚑</button></div></div></article></section><section v-else class="empty">По вашему запросу ничего не найдено.</section>
+</main>
+<footer><span>TITANIUM MARKET</span><span>Официальная электронная площадка объявлений</span></footer>
 
-      <div class="top-actions">
-        <span class="status">
-          <span :class="['status-dot', { online: apiOnline }]"></span>
-          {{ apiOnline ? "Сервис работает" : "Демо-режим" }}
-        </span>
+<div v-if="showRules" class="modal-backdrop" @click.self="showRules=false"><section class="modal rules-modal"><div class="modal-head"><div><div class="section-kicker">ПРАВИЛА ПЛОЩАДКИ</div><h2>Правила Titanium Market</h2></div><button type="button" class="close" @click="showRules=false">×</button></div><div class="rules-content"><div class="rules-block"><h3>✅ Разрешено</h3><ul><li>Размещать объявления о продаже и покупке автомобилей, недвижимости, бизнеса, работе и услугах.</li><li>Указывать актуальную и достоверную информацию.</li><li>Использовать корректные цены и контактные данные.</li><li>Размещать несколько объявлений, если они относятся к разным предложениям.</li></ul></div><div class="rules-block"><h3>❌ Запрещено</h3><ul><li>Ложная или вводящая в заблуждение информация.</li><li>Спам и одинаковые объявления.</li><li>Оскорбления, угрозы и провокации.</li><li>Реклама сторонних проектов без разрешения администрации.</li><li>Размещение объявлений не по соответствующей категории.</li><li>Любые предложения, нарушающие правила сервера.</li></ul></div></div></section></div>
 
-        <button class="media-link" @click="showMediaPanel ? showMediaPanel = false : openMediaLogin()">
-          Панель СМИ
-        </button>
+<div v-if="showCreate" class="modal-backdrop" @click.self="showCreate=false"><form class="modal" @submit.prevent="createAd"><div class="modal-head"><div><div class="section-kicker">НОВОЕ ОБЪЯВЛЕНИЕ</div><h2>Подать объявление</h2></div><button type="button" class="close" @click="showCreate=false">×</button></div><div class="notice">После отправки объявление будет проверено сотрудником СМИ.</div><label>Название<input v-model="form.title" required maxlength="80" placeholder="Например: Sultan"></label><div class="form-row"><label>Категория<select v-model="form.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label>Город<select v-model="form.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div><div class="form-row"><label>Цена<input v-model="form.price" type="number" min="0" placeholder="1500000"></label><label>Игровой ник<input v-model="form.seller" required maxlength="32" placeholder="Nick_Name"></label></div><label>Контакт<input v-model="form.contact" required maxlength="40" placeholder="555-1234"></label><label>Описание<textarea v-model="form.description" rows="4" maxlength="500" placeholder="Расскажите подробнее..."></textarea></label><button class="btn btn-primary submit" type="submit">Отправить на проверку</button></form></div>
 
-        <button class="btn btn-primary" @click="showCreate = true">
-          + Подать объявление
-        </button>
-      </div>
-    </header>
+<div v-if="showReport" class="modal-backdrop" @click.self="showReport=null"><form class="modal" @submit.prevent="reportAd"><div class="modal-head"><div><div class="section-kicker">ЖАЛОБА</div><h2>Пожаловаться</h2></div><button type="button" class="close" @click="showReport=null">×</button></div><p class="modal-description">Объявление: <b>{{showReport.title}}</b></p><label>Ваш игровой ник<input v-model="reportNick" maxlength="32" placeholder="Nick_Name"></label><label>Причина<textarea v-model="reportText" required maxlength="300" rows="4" placeholder="Почему объявление нарушает правила?"></textarea></label><button class="btn btn-primary submit">Отправить жалобу</button></form></div>
 
-    <main>
-      <section class="hero">
-        <div>
-          <div class="eyebrow">ЭЛЕКТРОННАЯ ПЛОЩАДКА ШТАТА</div>
-          <h1>Найди. Купи.<br /><span>Продай.</span></h1>
-          <p>
-            Автомобили, недвижимость, работа, услуги и бизнес —
-            всё в одном месте.
-          </p>
-        </div>
+<div v-if="showMediaLogin" class="modal-backdrop" @click.self="showMediaLogin=false"><form class="modal media-modal" @submit.prevent="mediaLogin"><div class="modal-head"><div><div class="section-kicker">ЗАКРЫТЫЙ РАЗДЕЛ</div><h2>Панель СМИ</h2></div><button type="button" class="close" @click="showMediaLogin=false">×</button></div><p class="modal-description">Доступ только для сотрудников СМИ.</p><label>Логин<input v-model="login.username"></label><label>Пароль<input v-model="login.password" type="password"></label><div v-if="mediaError" class="login-error">{{mediaError}}</div><button class="btn btn-primary submit">Войти</button><div class="login-hint">После входа сессия сохраняется на этом устройстве.</div></form></div>
 
-        <div class="hero-stat">
-          <strong>{{ filteredAds.length }}</strong>
-          <span>доступных объявлений</span>
-        </div>
-      </section>
+<div v-if="showMediaPanel" class="modal-backdrop panel-backdrop"><section class="media-panel"><div class="panel-header"><div><div class="section-kicker">MEDIA CONTROL</div><h2>Панель СМИ</h2></div><div class="panel-actions"><span class="logged-user">{{mediaUser}} · {{mediaRole === "root" ? "ROOT" : "СМИ"}}</span><button class="btn btn-secondary" @click="collapseMediaPanel">Свернуть</button><button class="btn btn-secondary" @click="logoutMedia">Выйти</button></div></div>
+<div class="stats"><div class="stat-box"><strong>{{stats.pending||0}}</strong><span>На проверке</span></div><div class="stat-box green"><strong>{{stats.approved||0}}</strong><span>Опубликовано</span></div><div class="stat-box red"><strong>{{stats.rejected||0}}</strong><span>Отклонено</span></div><div class="stat-box orange"><strong>{{stats.reports||0}}</strong><span>Жалобы</span></div></div>
+<div class="admin-tabs"><button :class="{active:mediaStatus==='pending'}" @click="setMediaStatus('pending')">На проверке</button><button :class="{active:mediaStatus==='approved'}" @click="setMediaStatus('approved')">Опубликованные</button><button :class="{active:mediaStatus==='rejected'}" @click="setMediaStatus('rejected')">Отклонённые</button><button :class="{active:mediaStatus==='archived'}" @click="setMediaStatus('archived')">Архив</button></div>
+<div class="panel-section"><div class="panel-section-head"><div><div class="section-kicker">MODERATION</div><h3>Объявления</h3></div><span class="result-count">{{pendingAds.length}}</span></div><div v-if="pendingAds.length" class="moderation-list"><article v-for="ad in pendingAds" :key="ad.id" class="moderation-card"><div class="moderation-main"><div class="card-top"><span class="tag">{{ad.category}}</span><span class="date">{{ad.createdAt}}</span></div><h3>{{ad.title}}</h3><div class="moderation-price">{{money(ad.price)}}</div><p>{{ad.description}}</p><div class="moderation-meta"><span>👤 {{ad.seller}}</span><span>📍 {{ad.city}}</span><span>☎ {{ad.contact}}</span></div></div><div class="moderation-actions"><button v-if="ad.status==='pending'" class="action-approve" @click="approve(ad)">✓ Одобрить</button><button class="action-edit" @click="openEdit(ad)">✎ Редактировать</button><button v-if="ad.status==='approved'" class="action-archive" @click="archive(ad)">↓ Снять</button><button v-if="ad.status==='pending'" class="action-reject" @click="openReject(ad)">× Отклонить</button></div></article></div><div v-else class="empty panel-empty">В этом разделе пока нет объявлений.</div></div>
+<div class="panel-section"><div class="panel-section-head"><div><div class="section-kicker">REPORTS</div><h3>Жалобы пользователей</h3></div><span class="result-count">{{reports.length}}</span></div><div v-if="reports.length" class="moderation-list"><article v-for="r in reports" :key="r.id" class="report-card"><div><b>#{{r.ad_id}} · {{r.title}}</b><p>{{r.reason}}</p><small>{{r.reporter_nickname}} · {{r.created_at}}</small></div><div class="moderation-actions"><button class="action-approve" @click="resolveReport(r.id,'resolve')">✓ Решено</button><button class="action-reject" @click="resolveReport(r.id,'dismiss')">× Ложная</button></div></article></div><div v-else class="empty panel-empty">Новых жалоб нет.</div></div>
+<div class="panel-section"><div class="panel-section-head"><div><div class="section-kicker">AUDIT LOG</div><h3>{{logScope === "all" ? "Журнал всех администраторов" : "Мои действия"}}</h3></div><span v-if='mediaRole === "root"' class="result-count">ROOT</span></div><div class="log-list"><div v-for="l in logs" :key="l.id" class="log-row"><span>#{{l.ad_id}}</span><b>{{l.action}}</b><span>{{l.moderator_nickname}}</span><small>{{l.created_at}}</small><em>{{l.comment}}</em></div></div></div>
+</section></div>
 
-      <section class="controls">
-        <div class="search">
-          <span>⌕</span>
-          <input
-            v-model="search"
-            placeholder="Поиск по объявлениям..."
-          />
-        </div>
+<div v-if="editAd" class="modal-backdrop" @click.self="editAd=null"><form class="modal" @submit.prevent="saveEdit"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Редактирование #{{editAd.id}}</h2></div><button type="button" class="close" @click="editAd=null">×</button></div><label>Название<input v-model="editForm.title" required maxlength="80"></label><div class="form-row"><label>Категория<select v-model="editForm.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label>Город<select v-model="editForm.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div><div class="form-row"><label>Цена<input v-model="editForm.price" type="number" min="0"></label><label>Контакт<input v-model="editForm.contact" maxlength="40"></label></div><label>Описание<textarea v-model="editForm.description" rows="5" maxlength="500"></textarea></label><button class="btn btn-primary submit">Сохранить изменения</button></form></div>
 
-        <div class="categories">
-          <button
-            v-for="category in categories"
-            :key="category"
-            :class="{ active: activeCategory === category }"
-            @click="activeCategory = category"
-          >
-            {{ category }}
-          </button>
-        </div>
-      </section>
-
-      <section class="section-head">
-        <div>
-          <div class="section-kicker">АКТУАЛЬНЫЕ ПРЕДЛОЖЕНИЯ</div>
-          <h2>Объявления</h2>
-        </div>
-
-        <span class="result-count">
-          {{ filteredAds.length }} найдено
-        </span>
-      </section>
-
-      <section v-if="loading" class="empty">
-        Загружаем объявления...
-      </section>
-
-      <section
-        v-else-if="filteredAds.length"
-        class="grid"
-      >
-        <article
-          v-for="ad in filteredAds"
-          :key="ad.id"
-          class="card"
-        >
-          <div class="card-top">
-            <span class="tag">{{ ad.category }}</span>
-            <span class="date">{{ ad.createdAt }}</span>
-          </div>
-
-          <h3>{{ ad.title }}</h3>
-
-          <div class="price">
-            {{ money(ad.price) }}
-          </div>
-
-          <p>{{ ad.description }}</p>
-
-          <div class="card-bottom">
-            <div>
-              <div class="seller">{{ ad.seller }}</div>
-              <div class="city">
-                {{ ad.city }} · {{ ad.contact }}
-              </div>
-            </div>
-
-            <button class="more">→</button>
-          </div>
-        </article>
-      </section>
-
-      <section v-else class="empty">
-        По вашему запросу ничего не найдено.
-      </section>
-    </main>
-
-    <footer>
-      <span>TITANIUM MARKET</span>
-      <span>
-        Официальный маркетплейс штата
-      </span>
-    </footer>
-
-    <!-- CREATE AD -->
-    <div
-      v-if="showCreate"
-      class="modal-backdrop"
-      @click.self="showCreate = false"
-    >
-      <form class="modal" @submit.prevent="createAd">
-        <div class="modal-head">
-          <div>
-            <div class="section-kicker">
-              НОВОЕ ОБЪЯВЛЕНИЕ
-            </div>
-            <h2>Подать объявление</h2>
-          </div>
-
-          <button
-            type="button"
-            class="close"
-            @click="showCreate = false"
-          >
-            ×
-          </button>
-        </div>
-
-        <div class="notice">
-          После отправки объявление будет проверено сотрудником СМИ.
-        </div>
-
-        <label>
-          Название
-          <input
-            v-model="form.title"
-            required
-            maxlength="80"
-            placeholder="Например: Sultan"
-          />
-        </label>
-
-        <div class="form-row">
-          <label>
-            Категория
-            <select v-model="form.category">
-              <option
-                v-for="category in categories.slice(1)"
-                :key="category"
-              >
-                {{ category }}
-              </option>
-            </select>
-          </label>
-
-          <label>
-            Город
-            <select v-model="form.city">
-              <option>Los Santos</option>
-              <option>San Fierro</option>
-              <option>Las Venturas</option>
-            </select>
-          </label>
-        </div>
-
-        <div class="form-row">
-          <label>
-            Цена
-            <input
-              v-model="form.price"
-              type="number"
-              min="0"
-              placeholder="1500000"
-            />
-          </label>
-
-          <label>
-            Игровой ник
-            <input
-              v-model="form.seller"
-              required
-              maxlength="32"
-              placeholder="Nick_Name"
-            />
-          </label>
-        </div>
-
-        <label>
-          Контакт
-          <input
-            v-model="form.contact"
-            required
-            maxlength="40"
-            placeholder="555-1234 или игровой ник"
-          />
-        </label>
-
-        <label>
-          Описание
-          <textarea
-            v-model="form.description"
-            rows="4"
-            maxlength="500"
-            placeholder="Расскажите подробнее..."
-          ></textarea>
-        </label>
-
-        <button class="btn btn-primary submit" type="submit">
-          Отправить на проверку
-        </button>
-      </form>
-    </div>
-
-    <!-- MEDIA LOGIN -->
-    <div
-      v-if="showMediaLogin"
-      class="modal-backdrop"
-      @click.self="showMediaLogin = false"
-    >
-      <form
-        class="modal media-modal"
-        @submit.prevent="mediaLogin"
-      >
-        <div class="modal-head">
-          <div>
-            <div class="section-kicker">
-              ЗАКРЫТЫЙ РАЗДЕЛ
-            </div>
-            <h2>Панель СМИ</h2>
-          </div>
-
-          <button
-            type="button"
-            class="close"
-            @click="showMediaLogin = false"
-          >
-            ×
-          </button>
-        </div>
-
-        <p class="modal-description">
-          Доступ предназначен только для сотрудников,
-          ответственных за модерацию объявлений.
-        </p>
-
-        <label>
-          Логин
-          <input
-            v-model="login.username"
-            autocomplete="username"
-            placeholder="Введите логин"
-          />
-        </label>
-
-        <label>
-          Пароль
-          <input
-            v-model="login.password"
-            type="password"
-            autocomplete="current-password"
-            placeholder="Введите пароль"
-          />
-        </label>
-
-        <div v-if="mediaError" class="login-error">
-          {{ mediaError }}
-        </div>
-
-        <button class="btn btn-primary submit" type="submit">
-          Войти в панель
-        </button>
-
-        <div class="dev-hint">
-          Тестовый доступ: <b>admin</b> / <b>123456</b>
-        </div>
-      </form>
-    </div>
-
-    <!-- MEDIA PANEL -->
-    <div
-      v-if="showMediaPanel"
-      class="modal-backdrop panel-backdrop"
-    >
-      <section class="media-panel">
-        <div class="panel-header">
-          <div>
-            <div class="section-kicker">
-              MEDIA CONTROL
-            </div>
-            <h2>Панель модерации</h2>
-          </div>
-
-          <div class="panel-actions">
-            <span class="logged-user">
-              {{ mediaUser }}
-            </span>
-
-            <button
-              class="btn btn-secondary"
-              @click="logoutMedia"
-            >
-              Выйти
-            </button>
-          </div>
-        </div>
-
-        <div class="stats">
-          <div class="stat-box">
-            <strong>{{ ads.length }}</strong>
-            <span>Всего</span>
-          </div>
-
-          <div class="stat-box orange">
-            <strong>{{ pendingAds.length }}</strong>
-            <span>На проверке</span>
-          </div>
-
-          <div class="stat-box green">
-            <strong>
-              {{ ads.filter(a => a.status === "approved").length }}
-            </strong>
-            <span>Одобрено</span>
-          </div>
-
-          <div class="stat-box red">
-            <strong>
-              {{ ads.filter(a => a.status === "rejected").length }}
-            </strong>
-            <span>Отклонено</span>
-          </div>
-        </div>
-
-        <div class="panel-section">
-          <div class="panel-section-head">
-            <div>
-              <div class="section-kicker">
-                MODERATION QUEUE
-              </div>
-              <h3>Объявления на проверке</h3>
-            </div>
-
-            <span class="result-count">
-              {{ pendingAds.length }} ожидает
-            </span>
-          </div>
-
-          <div
-            v-if="pendingAds.length"
-            class="moderation-list"
-          >
-            <article
-              v-for="ad in pendingAds"
-              :key="ad.id"
-              class="moderation-card"
-            >
-              <div class="moderation-main">
-                <div class="card-top">
-                  <span class="tag">{{ ad.category }}</span>
-                  <span class="date">{{ ad.createdAt }}</span>
-                </div>
-
-                <h3>{{ ad.title }}</h3>
-
-                <div class="moderation-price">
-                  {{ money(ad.price) }}
-                </div>
-
-                <p>{{ ad.description }}</p>
-
-                <div class="moderation-meta">
-                  <span>👤 {{ ad.seller }}</span>
-                  <span>📍 {{ ad.city }}</span>
-                  <span>☎ {{ ad.contact }}</span>
-                </div>
-              </div>
-
-              <div class="moderation-actions">
-                <button
-                  class="action-approve"
-                  @click="approveAd(ad)"
-                >
-                  ✓ Одобрить
-                </button>
-
-                <button
-                  class="action-reject"
-                  @click="rejectAd(ad)"
-                >
-                  × Отклонить
-                </button>
-              </div>
-            </article>
-          </div>
-
-          <div v-else class="empty panel-empty">
-            Новых объявлений на проверке нет.
-          </div>
-        </div>
-      </section>
-    </div>
-  </div>
+<div v-if="rejectAdTarget" class="modal-backdrop" @click.self="rejectAdTarget=null"><form class="modal" @submit.prevent="reject"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Отклонение объявления</h2></div><button type="button" class="close" @click="rejectAdTarget=null">×</button></div><p class="modal-description">{{rejectAdTarget.title}}</p><label>Причина отклонения<textarea v-model="rejectReason" required maxlength="300" rows="4" placeholder="Укажите причину..."></textarea></label><button class="btn btn-primary submit">Отклонить</button></form></div>
+</div>
 </template>
