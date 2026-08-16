@@ -22,6 +22,23 @@ const pool = new Pool({
   connectionTimeoutMillis: 10000
 });
 
+// VK хранится в отдельном поле объявления. Создаём его автоматически
+// для существующей базы, не затрагивая остальные поля.
+await pool.query("ALTER TABLE ads ADD COLUMN IF NOT EXISTS vk TEXT");
+
+function normalizeVk(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  const v = raw
+    .replace(/^https?:\/\/(?:www\.)?vk\.com\//i, "")
+    .replace(/^vk\.com\//i, "")
+    .replace(/^@/, "")
+    .replace(/^\//, "")
+    .trim();
+  if (!v || /[\s\]]/.test(v)) return "";
+  return `https://vk.com/${v}`.slice(0, 200);
+}
+
 app.disable("x-powered-by");
 app.use(express.json({ limit: "1mb" }));
 
@@ -48,21 +65,53 @@ function verifyPassword(password, saltB64, hashB64) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 function rowToAd(row) {
-  return { id:Number(row.id), title:row.title, category:row.category, city:row.city, price:Number(row.price||0), seller:row.seller, contact:row.contact, description:row.description, status:row.status, createdAt:row.created_at, expiresAt:row.expires_at };
+  return {
+    id:Number(row.id),
+    title:row.title,
+    category:row.category,
+    city:row.city,
+    price:Number(row.price||0),
+    seller:row.seller,
+    contact:row.contact,
+    description:row.description,
+    vk:row.vk,
+    status:row.status,
+    createdAt:row.created_at,
+    expiresAt:row.expires_at
+  };
 }
 async function expireAds() {
-  await pool.query(`UPDATE ads SET status='expired' WHERE status='approved' AND expires_at IS NOT NULL AND expires_at <= NOW()`);
+  try {
+    const result = await pool.query(`
+      DELETE FROM ads
+      WHERE status = 'approved'
+        AND expires_at IS NOT NULL
+        AND expires_at <= NOW()
+      RETURNING id, title
+    `);
+
+    for (const ad of result.rows) {
+      console.log(
+        `[Titanium Market] Объявление #${ad.id} "${ad.title}" удалено после 7 дней публикации.`
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[Titanium Market] Ошибка удаления истёкших объявлений:",
+      error
+    );
+  }
 }
 async function getAds(status="pending") {
   await expireAds();
   let where="ads.status=$1";
   const params=[status];
   if(status==="approved") where += " AND (ads.expires_at IS NULL OR ads.expires_at>NOW())";
-  const result=await pool.query(`SELECT ads.id,ads.title,categories.name AS category,ads.city,ads.price,users.nickname AS seller,ads.contact,ads.description,ads.status,ads.created_at,ads.expires_at FROM ads LEFT JOIN categories ON categories.id=ads.category_id LEFT JOIN users ON users.id=ads.user_id WHERE ${where} ORDER BY ads.id DESC`,params);
+  const result=await pool.query(`SELECT ads.id,ads.title,categories.name AS category,ads.city,ads.price,users.nickname AS seller,ads.contact,ads.description,ads.vk,ads.status,ads.created_at,ads.expires_at FROM ads LEFT JOIN categories ON categories.id=ads.category_id LEFT JOIN users ON users.id=ads.user_id WHERE ${where} ORDER BY ads.id DESC`,params);
   return result.rows.map(rowToAd);
 }
 async function getAd(id) {
-  const result=await pool.query(`SELECT ads.id,ads.title,categories.name AS category,ads.city,ads.price,users.nickname AS seller,ads.contact,ads.description,ads.status,ads.created_at,ads.expires_at FROM ads LEFT JOIN categories ON categories.id=ads.category_id LEFT JOIN users ON users.id=ads.user_id WHERE ads.id=$1`,[id]);
+  const result=await pool.query(`SELECT ads.id,ads.title,categories.name AS category,ads.city,ads.price,users.nickname AS seller,ads.contact,ads.description,ads.vk,ads.status,ads.created_at,ads.expires_at FROM ads LEFT JOIN categories ON categories.id=ads.category_id LEFT JOIN users ON users.id=ads.user_id WHERE ads.id=$1`,[id]);
   return result.rows[0] || null;
 }
 async function writeLog(adId,admin,action,comment) {
@@ -100,7 +149,7 @@ app.post("/api/ads",async(req,res)=>{
   try {
     const body=req.body||{};
     if(!body.title||!body.category||!body.seller||!body.contact) return json(res,{error:"Не заполнены обязательные поля."},400);
-    const title=String(body.title).trim().slice(0,80), category=String(body.category).trim().slice(0,40), city=String(body.city??"Не указан").trim().slice(0,40), price=Math.max(0,Number(body.price??0)||0), seller=String(body.seller).trim().slice(0,32), contact=String(body.contact).trim().slice(0,40), description=String(body.description??"").trim().slice(0,500);
+    const title=String(body.title).trim().slice(0,80), category=String(body.category).trim().slice(0,40), city=String(body.city??"Не указан").trim().slice(0,40), price=Math.max(0,Number(body.price??0)||0), seller=String(body.seller).trim().slice(0,32), contact=String(body.contact).trim().slice(0,40), description=String(body.description??"").trim().slice(0,500), vk=normalizeVk(body.vk);
     const categoryResult=await pool.query("SELECT id FROM categories WHERE name=$1",[category]);
     const categoryRow=categoryResult.rows[0];
     if(!categoryRow) return json(res,{error:"Неизвестная категория."},400);
@@ -111,7 +160,7 @@ app.post("/api/ads",async(req,res)=>{
       user=userResult.rows[0];
     }
     if(!user) return json(res,{error:"Не удалось создать пользователя."},500);
-    const result=await pool.query(`INSERT INTO ads (user_id,title,category_id,city,price,description,contact,status,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,'pending',NOW()+INTERVAL '7 days') RETURNING id`,[user.id,title,categoryRow.id,city,price,description,contact]);
+    const result=await pool.query(`INSERT INTO ads (user_id,title,category_id,city,price,description,contact,vk,status,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW()+INTERVAL '7 days') RETURNING id`,[user.id,title,categoryRow.id,city,price,description,contact,vk]);
     return json(res,{ok:true,adId:Number(result.rows[0].id),status:"pending"},201);
   } catch(error){ console.error("[Titanium Market] POST /api/ads:",error); return json(res,{error:"Не удалось создать объявление."},500); }
 });
@@ -198,11 +247,11 @@ app.patch("/api/media/ads/:id",async(req,res)=>{
     const admin=await adminOnly(req,res); if(!admin)return;
     const id=Number(req.params.id),body=req.body||{},ad=await getAd(id);
     if(!ad)return json(res,{error:"Объявление не найдено."},404);
-    const title=String(body.title??ad.title).trim().slice(0,80),city=String(body.city??ad.city).trim().slice(0,40),price=Math.max(0,Number(body.price??ad.price)||0),contact=String(body.contact??ad.contact).trim().slice(0,40),description=String(body.description??ad.description).trim().slice(0,500),category=String(body.category??ad.category).trim().slice(0,40);
+    const title=String(body.title??ad.title).trim().slice(0,80),city=String(body.city??ad.city).trim().slice(0,40),price=Math.max(0,Number(body.price??ad.price)||0),contact=String(body.contact??ad.contact).trim().slice(0,40),description=String(body.description??ad.description).trim().slice(0,500),vk=normalizeVk(body.vk??ad.vk),category=String(body.category??ad.category).trim().slice(0,40);
     const categoryResult=await pool.query("SELECT id FROM categories WHERE name=$1",[category]),cat=categoryResult.rows[0];
     if(!cat)return json(res,{error:"Неизвестная категория."},400);
     const comment=`Изменено объявление #${id}: название «${ad.title}» → «${title}»; цена ${ad.price} → ${price}; город «${ad.city}» → «${city}»; категория «${ad.category}» → «${category}»; контакт «${ad.contact}» → «${contact}».`;
-    await pool.query("UPDATE ads SET title=$1,category_id=$2,city=$3,price=$4,description=$5,contact=$6 WHERE id=$7",[title,cat.id,city,price,description,contact,id]);
+    await pool.query("UPDATE ads SET title=$1,category_id=$2,city=$3,price=$4,description=$5,contact=$6,vk=$7 WHERE id=$8",[title,cat.id,city,price,description,contact,vk,id]);
     await writeLog(id,admin,"edit",comment);
     return json(res,{ok:true});
   } catch(error){ console.error("[Titanium Market] PATCH /api/media/ads/:id:",error); return json(res,{error:"Не удалось изменить объявление."},500); }

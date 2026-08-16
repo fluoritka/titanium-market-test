@@ -487,3 +487,247 @@ footer {
 .rules-block ul { margin:0; padding-left:20px; display:grid; gap:10px; color:var(--muted, #a8adb8); line-height:1.5; }
 .rules-block li::marker { color:inherit; }
 @media (max-width:760px){ .rules-modal{max-width:calc(100vw - 28px);} .top-actions{gap:8px; flex-wrap:wrap;} }
+
+
+/* =========================================================
+   CREATE AD — restore styling for the current vehicle form
+   This patch only styles the existing classes in App.vue.
+   ========================================================= */
+
+.create-modal {
+  width: min(900px, 100%);
+}
+
+.create-modal .category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 52px;
+  padding: 0;
+}
+
+.create-modal .category-tabs button {
+  appearance: none;
+  border: 1px solid #252932;
+  background: #0f1116;
+  color: #8f95a1;
+  border-radius: 10px;
+  padding: 11px 17px;
+  min-height: 42px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  transition: border-color .18s ease, background .18s ease, color .18s ease;
+}
+
+.create-modal .category-tabs button:hover {
+  border-color: #3a3f4b;
+  color: #e8eaf0;
+}
+
+.create-modal .category-tabs button.active {
+  background: #ff7b25;
+  border-color: #ff7b25;
+  color: #fff;
+}
+
+.create-modal .field-label {
+  display: block;
+  color: #8b909b;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 12px 0 8px;
+}
+
+.create-modal .autocomplete {
+  position: relative;
+}
+
+.create-modal .autocomplete-menu {
+  position: absolute;
+  z-index: 70;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  max-height: 310px;
+  overflow-y: auto;
+  background: #101217;
+  border: 1px solid #292d35;
+  border-radius: 11px;
+  padding: 6px;
+  box-shadow: 0 20px 50px rgba(0,0,0,.55);
+}
+
+.create-modal .vehicle-group {
+  padding: 4px 0;
+}
+
+.create-modal .vehicle-group-title {
+  color: #ff9a3d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  padding: 8px 10px 5px;
+  text-transform: uppercase;
+}
+
+.create-modal .vehicle-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #c4c8d1;
+  text-align: left;
+  border-radius: 7px;
+  padding: 9px 10px;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.create-modal .vehicle-option:hover {
+  background: rgba(255,123,37,.09);
+  color: #fff;
+}
+
+.create-modal .tuning-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0 0 8px;
+}
+
+.create-modal .tuning-chip {
+  appearance: none;
+  min-height: 40px;
+  border: 1px solid #252932;
+  border-radius: 9px;
+  background: #0a0c10;
+  color: #8f95a1;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  transition: .18s ease;
+}
+
+.create-modal .tuning-chip:hover {
+  border-color: #3a3f4b;
+  color: #fff;
+}
+
+.create-modal .tuning-chip.selected {
+  background: rgba(255,123,37,.11);
+  border-color: #ff7b25;
+  color: #ff9a3d;
+}
+
+.create-modal .tuning-help {
+  color: #666c78;
+  font-size: 10px;
+  line-height: 1.5;
+  margin: 5px 0 15px;
+}
+
+.create-modal .field-error {
+  color: #f87171;
+  background: rgba(239,68,68,.07);
+  border: 1px solid rgba(239,68,68,.18);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 10px;
+  margin: 8px 0 14px;
+}
+
+.create-modal .checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8b909b;
+  margin: 2px 0 15px;
+}
+
+.create-modal .checkbox-line input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #ff7b25;
+}
+
+.create-modal .checkbox-line span {
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .create-modal .tuning-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .create-modal .category-tabs {
+    gap: 6px;
+  }
+
+  .create-modal .category-tabs button {
+    padding: 10px 12px;
+    font-size: 12px;
+  }
+
+
+  /* =========================================================
+   ОТСТУПЫ В ФОРМЕ СОЗДАНИЯ ОБЪЯВЛЕНИЯ
+   ========================================================= */
+
+/* Отступ сверху и снизу для надписи "Категория" */
+.create-label {
+  display: block;
+  color: #8b909b;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 20px;
+  margin-bottom: 8px;
+}
+
+/* Отступ от кнопок выбора категорий до следующих полей */
+.modal-categories {
+  margin-bottom: 18px;
+}
+
+/* Отступ между блоками полей ввода */
+.form-row {
+  margin-top: 14px;
+}
+
+/* Отступ под кнопками выбора категорий */
+.modal-categories {
+  margin-bottom: 20px !important;
+}
+
+/* Отступ над заголовками полей "Марка / Модель авто" и "Тюнинг" */
+.form-row label {
+  margin-top: 15px !important;
+}
+
+/* Оформление заголовков и меток в модальном окне */
+.modal label,
+.create-label {
+  display: block;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: #8b909b !important;
+  margin-bottom: 6px !important;
+}
+
+/* Оформление слова (необязательно) */
+.modal label .optional {
+  font-size: 11px !important;
+  font-weight: 400 !important;
+  color: #5c6068 !important;
+  margin-left: 4px;
+}
+
+.vk-link {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-decoration: none !important;
+  line-height: 1 !important;
+}
+}
