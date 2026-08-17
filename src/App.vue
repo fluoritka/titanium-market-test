@@ -314,11 +314,10 @@ async function reject(){if(!rejectAdTarget.value||!rejectReason.value.trim())ret
 async function archive(ad:Ad){if(confirm("Снять это объявление с публикации?"))await action(ad.id,"archive");}
 function openEdit(ad:Ad){
   editAd.value=ad;
-
-  // VK сначала читаем из description-маркера, затем из отдельного поля.
-  // Редактор получает обычный username без служебного формата.
+  const clean=displayDescription(ad.description);
+  const lines=clean.split("\n");
+  const getLine=(label:string)=>lines.find(x=>x.toLowerCase().startsWith(label.toLowerCase()+" - "))?.replace(/^.*? - /,"").replace(/;$/,"")||"";
   const vkLink=getVkLink(ad);
-  const vkUsername=vkLink.replace(/^https?:\/\/vk\.com\//i,"");
 
   editForm.value={
     title:ad.title,
@@ -327,18 +326,69 @@ function openEdit(ad:Ad){
     price:ad.price,
     contact:ad.contact,
     seller:ad.seller,
-    description:displayDescription(ad.description),
-    vk:vkUsername
+    description:clean,
+    vk:vkLink.replace(/^https?:\/\/vk\.com\//i,""),
+    tuning:ad.category==="Автомобили" ? (getLine("Тюнинг") ? `[${getLine("Тюнинг")}]` : "") : "",
+    accelerationStage:ad.category==="Автомобили" ? (getLine("Ускорение") ? `${getLine("Ускорение")}/3` : "") : "",
+    speedStage:ad.category==="Автомобили" ? (getLine("Скорость") ? `${getLine("Скорость")}/3` : "") : "",
+    district:(ad.category==="Недвижимость"||ad.category==="Бизнесы") ? getLine("Район") : ""
   };
 }
+function rebuildEditDescription(){
+  if(!editAd.value)return;
+
+  let description=displayDescription(editForm.value.description||"");
+
+  const generatedPrefixes=["Тюнинг","Ускорение","Скорость","Район"];
+  description=description
+    .split("\n")
+    .filter((line:string)=>!generatedPrefixes.some(prefix=>line.toLowerCase().startsWith(prefix.toLowerCase()+" - ")))
+    .join("\n")
+    .trim();
+
+  const lines:string[]=[];
+
+  if(editForm.value.category==="Автомобили"){
+    if(editForm.value.tuning){
+      lines.push(`Тюнинг - ${tuningText(editForm.value.tuning)};`);
+    }
+    if(editForm.value.accelerationStage){
+      lines.push(`Ускорение - ${editForm.value.accelerationStage.split("/")[0]};`);
+    }
+    if(editForm.value.speedStage){
+      lines.push(`Скорость - ${editForm.value.speedStage.split("/")[0]};`);
+    }
+  }else if(editForm.value.category==="Недвижимость" || editForm.value.category==="Бизнесы"){
+    if(editForm.value.district){
+      lines.push(`Район - ${editForm.value.district};`);
+    }
+  }
+
+  editForm.value.description=lines.length
+    ? lines.join("\n")+(description?`\n${description}`:"")
+    : description;
+}
+
 async function saveEdit(){
   if(!editAd.value)return;
 
   const normalizedVk=normalizeVk(editForm.value.vk||"");
-  let description=displayDescription(editForm.value.description).slice(0,500);
+  let description=displayDescription(editForm.value.description);
 
-  // Сохраняем VK обратно в description, чтобы после редактирования
-  // он гарантированно оставался доступен во всех местах.
+  const generatedPrefixes=["Тюнинг","Ускорение","Скорость","Район"];
+  description=description.split("\n").filter((line:string)=>!generatedPrefixes.some(prefix=>line.toLowerCase().startsWith(prefix.toLowerCase()+" - "))).join("\n").trim();
+
+  const lines:string[]=[];
+  if(editForm.value.category==="Автомобили"){
+    if(editForm.value.tuning) lines.push(`Тюнинг - ${tuningText(editForm.value.tuning)};`);
+    if(editForm.value.accelerationStage) lines.push(`Ускорение - ${editForm.value.accelerationStage.split("/")[0]};`);
+    if(editForm.value.speedStage) lines.push(`Скорость - ${editForm.value.speedStage.split("/")[0]};`);
+  } else if(editForm.value.category==="Недвижимость" || editForm.value.category==="Бизнесы"){
+    if(editForm.value.district) lines.push(`Район - ${editForm.value.district};`);
+  }
+  description=lines.length ? lines.join("\n")+(description?`\n${description}`:"") : description;
+  description=description.slice(0,500);
+
   if(normalizedVk){
     const username=normalizedVk.replace(/^https?:\/\/vk\.com\//i,"");
     const marker=`[[VK:/${username}]]`;
@@ -346,11 +396,7 @@ async function saveEdit(){
     description=description ? `${description}\n${marker}` : marker;
   }
 
-  const payload={
-    ...editForm.value,
-    description,
-    vk:normalizedVk
-  };
+  const payload={...editForm.value,description,vk:normalizedVk};
 
   const r=await fetch(`/api/media/ads/${editAd.value.id}`,{
     method:"PATCH",
@@ -541,7 +587,24 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
 <div class="panel-section"><div class="panel-section-head"><div><div class="section-kicker">AUDIT LOG</div><h3>{{logScope === "all" ? "Журнал всех администраторов" : "Мои действия"}}</h3></div><span v-if='mediaRole === "root"' class="result-count">ROOT</span></div><div class="log-list"><div v-for="l in logs" :key="l.id" class="log-row"><span>#{{l.ad_id}}</span><b>{{l.action}}</b><span>{{l.moderator_nickname}}</span><small>{{formatDate(l.created_at)}}</small><em>{{l.comment}}</em></div></div></div>
 </section></div>
 
-<div v-if="editAd" class="modal-backdrop" @click.self="editAd=null"><form class="modal" @submit.prevent="saveEdit"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Редактирование #{{editAd.id}}</h2></div><button type="button" class="close" @click="editAd=null">×</button></div><label>Название<input v-model="editForm.title" required maxlength="80"></label><div class="form-row"><label>Категория<select v-model="editForm.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label>Город<select v-model="editForm.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div><div class="form-row"><label>Цена<input v-model="editForm.price" type="number" min="0"></label><label>Контакт<input v-model="editForm.contact" maxlength="40"></label></div><label>VK <span style="font-weight: 400; color: #626772;">необязательно</span><input v-model="editForm.vk" maxlength="120" placeholder="username"></label><label>Описание<textarea v-model="editForm.description" rows="5" maxlength="500"></textarea></label><button class="btn btn-primary submit">Сохранить изменения</button></form></div>
+<div v-if="editAd" class="modal-backdrop" @click.self="editAd=null"><form class="modal" @submit.prevent="saveEdit"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Редактирование #{{editAd.id}}</h2></div><button type="button" class="close" @click="editAd=null">×</button></div>
+<label>Название<input v-model="editForm.title" required maxlength="80"></label>
+<div class="form-row"><label>Категория<select v-model="editForm.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label v-if="editForm.category!=='Автомобили'">Город<select v-model="editForm.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div>
+<template v-if="editForm.category==='Автомобили'">
+  <div class="form-row"><label>Марка / Модель<input v-model="editForm.title" required maxlength="80"></label><label>Тюнинг<select v-model="editForm.tuning" @change="rebuildEditDescription"><option value="">Без тюнинга</option><option v-for="t in tuningOptions" :key="t" :value="t">{{t}}</option></select></label></div>
+  <div class="form-row"><label>Ускорение<select v-model="editForm.accelerationStage" @change="rebuildEditDescription"><option value="">Не выбран</option><option v-for="s in stageOptions.slice(1)" :key="s" :value="s">{{s}}</option></select></label><label>Скорость<select v-model="editForm.speedStage" @change="rebuildEditDescription"><option value="">Не выбран</option><option v-for="s in stageOptions.slice(1)" :key="s" :value="s">{{s}}</option></select></label></div>
+</template>
+<template v-else-if="editForm.category==='Недвижимость'">
+  <div class="form-row"><label>Класс дома<select v-model="editForm.title"><option v-for="hc in houseClasses" :key="hc" :value="hc">{{hc}}</option></select></label><label>Район<select v-model="editForm.district" @change="rebuildEditDescription"><option value="">Не выбран</option><option v-for="d in houseDistricts" :key="d" :value="d">{{d}}</option></select></label></div>
+</template>
+<template v-else-if="editForm.category==='Бизнесы'">
+  <div class="form-row"><label>Тип бизнеса<select v-model="editForm.title"><option v-for="b in businessTypes" :key="b" :value="b">{{b}}</option></select></label><label>Район<select v-model="editForm.district" @change="rebuildEditDescription"><option value="">Не выбран</option><option v-for="d in houseDistricts" :key="d" :value="d">{{d}}</option></select></label></div>
+</template>
+<div class="form-row"><label>Игровой ник<input v-model="editForm.seller" maxlength="32"></label><label>Цена<input v-model="editForm.price" type="number" min="0"></label></div>
+<label>Контакт<input v-model="editForm.contact" maxlength="40"></label>
+<label>VK <span style="font-weight: 400; color: #626772;">необязательно</span><input v-model="editForm.vk" maxlength="120" placeholder="username"></label>
+<label>Описание<textarea v-model="editForm.description" rows="5" maxlength="500"></textarea></label>
+<button class="btn btn-primary submit">Сохранить изменения</button></form></div>
 
 <div v-if="rejectAdTarget" class="modal-backdrop" @click.self="rejectAdTarget=null"><form class="modal" @submit.prevent="reject"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Отклонение объявления</h2></div><button type="button" class="close" @click="rejectAdTarget=null">×</button></div><p class="modal-description">{{rejectAdTarget.title}}</p><label>Причина отклонения<textarea v-model="rejectReason" required maxlength="300" rows="4" placeholder="Укажите причину..."></textarea></label><button class="btn btn-primary submit">Отклонить</button></form></div>
 </div>

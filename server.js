@@ -244,17 +244,98 @@ app.get("/api/media/logs",async(req,res)=>{
 
 app.patch("/api/media/ads/:id",async(req,res)=>{
   try {
-    const admin=await adminOnly(req,res); if(!admin)return;
-    const id=Number(req.params.id),body=req.body||{},ad=await getAd(id);
-    if(!ad)return json(res,{error:"Объявление не найдено."},404);
-    const title=String(body.title??ad.title).trim().slice(0,80),city=String(body.city??ad.city).trim().slice(0,40),price=Math.max(0,Number(body.price??ad.price)||0),contact=String(body.contact??ad.contact).trim().slice(0,40),description=String(body.description??ad.description).trim().slice(0,500),vk=normalizeVk(body.vk??ad.vk),category=String(body.category??ad.category).trim().slice(0,40);
-    const categoryResult=await pool.query("SELECT id FROM categories WHERE name=$1",[category]),cat=categoryResult.rows[0];
-    if(!cat)return json(res,{error:"Неизвестная категория."},400);
-    const comment=`Изменено объявление #${id}: название «${ad.title}» → «${title}»; цена ${ad.price} → ${price}; город «${ad.city}» → «${city}»; категория «${ad.category}» → «${category}»; контакт «${ad.contact}» → «${contact}».`;
-    await pool.query("UPDATE ads SET title=$1,category_id=$2,city=$3,price=$4,description=$5,contact=$6,vk=$7 WHERE id=$8",[title,cat.id,city,price,description,contact,vk,id]);
+    const admin=await adminOnly(req,res);
+    if(!admin)return;
+
+    const id=Number(req.params.id);
+    const body=req.body||{};
+    const ad=await getAd(id);
+
+    if(!ad){
+      return json(res,{error:"Объявление не найдено."},404);
+    }
+
+    const title=String(body.title??ad.title).trim().slice(0,80);
+    const city=String(body.city??ad.city).trim().slice(0,40);
+    const price=Math.max(0,Number(body.price??ad.price)||0);
+    const seller=String(body.seller??ad.seller).trim().slice(0,32);
+    const contact=String(body.contact??ad.contact).trim().slice(0,40);
+    const description=String(body.description??ad.description).trim().slice(0,500);
+    const vk=normalizeVk(body.vk??ad.vk);
+    const category=String(body.category??ad.category).trim().slice(0,40);
+
+    if(!seller){
+      return json(res,{error:"Укажите игровой ник."},400);
+    }
+
+    const categoryResult=await pool.query(
+      "SELECT id FROM categories WHERE name=$1",
+      [category]
+    );
+
+    const cat=categoryResult.rows[0];
+
+    if(!cat){
+      return json(res,{error:"Неизвестная категория."},400);
+    }
+
+    /*
+      Находим пользователя, которому принадлежит объявление,
+      и меняем его ник.
+    */
+    const userResult=await pool.query(
+      "SELECT user_id FROM ads WHERE id=$1",
+      [id]
+    );
+
+    const userId=userResult.rows[0]?.user_id;
+
+    if(!userId){
+      return json(res,{error:"Не удалось определить владельца объявления."},500);
+    }
+
+    /*
+      Проверяем, не занят ли новый ник другим пользователем.
+      Если такой ник уже существует у другого пользователя,
+      используем его.
+    */
+    const existingUserResult=await pool.query(
+      "SELECT id FROM users WHERE nickname=$1 LIMIT 1",
+      [seller]
+    );
+
+    const existingUser=existingUserResult.rows[0];
+
+    if(existingUser && Number(existingUser.id)!==Number(userId)){
+      return json(res,{error:"Пользователь с таким игровым ником уже существует."},400);
+    }
+
+    const comment=
+      `Изменено объявление #${id}: ` +
+      `название «${ad.title}» → «${title}»; ` +
+      `цена ${ad.price} → ${price}; ` +
+      `город «${ad.city}» → «${city}»; ` +
+      `категория «${ad.category}» → «${category}»; ` +
+      `игровой ник «${ad.seller}» → «${seller}»; ` +
+      `контакт «${ad.contact}» → «${contact}».`;
+
+    await pool.query(
+      "UPDATE users SET nickname=$1 WHERE id=$2",
+      [seller,userId]
+    );
+
+    await pool.query(
+      "UPDATE ads SET title=$1,category_id=$2,city=$3,price=$4,description=$5,contact=$6,vk=$7 WHERE id=$8",
+      [title,cat.id,city,price,description,contact,vk,id]
+    );
+
     await writeLog(id,admin,"edit",comment);
+
     return json(res,{ok:true});
-  } catch(error){ console.error("[Titanium Market] PATCH /api/media/ads/:id:",error); return json(res,{error:"Не удалось изменить объявление."},500); }
+  } catch(error) {
+    console.error("[Titanium Market] PATCH /api/media/ads/:id:",error);
+    return json(res,{error:"Не удалось изменить объявление."},500);
+  }
 });
 
 app.post("/api/media/ads/:id/:action",async(req,res)=>{
@@ -307,11 +388,48 @@ app.post("/api/media/reports/resolve",async(req,res)=>{
   } catch(error){ console.error("[Titanium Market] POST /api/media/reports/resolve:",error); return json(res,{error:"Не удалось обработать жалобу."},500); }
 });
 
-const dist=path.join(__dirname,"dist");
-app.use(express.static(dist,{index:false}));
-app.get(/.*/,(_req,res)=>res.sendFile(path.join(dist,"index.html")));
+const dist = path.join(__dirname, "dist");
 
-const server=app.listen(PORT,"0.0.0.0",()=>{
+app.use(
+  express.static(dist, {
+    index: false,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith("index.html")) {
+        res.setHeader(
+          "Cache-Control",
+          "no-store, no-cache, must-revalidate, proxy-revalidate"
+        );
+        res.setHeader("Pragma", "no-cache");
+        res.setHeader("Expires", "0");
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader(
+          "Cache-Control",
+          "public, max-age=31536000, immutable"
+        );
+      }
+    }
+  })
+);
+
+// SPA fallback.
+// Если запрошен отсутствующий JS/CSS из /assets,
+// не возвращаем index.html вместо файла.
+app.get(/.*/, (req, res) => {
+  if (req.path.startsWith("/assets/")) {
+    return res.status(404).send("Asset not found");
+  }
+
+  return res.sendFile(path.join(dist, "index.html"), {
+    headers: {
+      "Cache-Control":
+        "no-store, no-cache, must-revalidate, proxy-revalidate",
+      "Pragma": "no-cache",
+      "Expires": "0"
+    }
+  });
+});
+
+const server = app.listen(PORT, "0.0.0.0", () => {
   console.log(`[Titanium Market] listening on port ${PORT}`);
   console.log("[Titanium Market] database: Supabase PostgreSQL");
 });
