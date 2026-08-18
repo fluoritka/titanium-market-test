@@ -26,6 +26,16 @@ const pool = new Pool({
 // для существующей базы, не затрагивая остальные поля.
 await pool.query("ALTER TABLE ads ADD COLUMN IF NOT EXISTS vk TEXT");
 
+// Категория «Сим-Карты» нужна текущему интерфейсу подачи объявлений.
+// Добавляем её автоматически при запуске, если её ещё нет в БД.
+await pool.query(`
+  INSERT INTO categories (name)
+  SELECT $1
+  WHERE NOT EXISTS (
+    SELECT 1 FROM categories WHERE name=$1
+  )
+`, ["Сим-Карты"]);
+
 function normalizeVk(value) {
   const raw = String(value ?? "").trim();
   if (!raw) return "";
@@ -148,21 +158,79 @@ app.get("/api/ads",async(_req,res)=>{
 app.post("/api/ads",async(req,res)=>{
   try {
     const body=req.body||{};
-    if(!body.title||!body.category||!body.seller||!body.contact) return json(res,{error:"Не заполнены обязательные поля."},400);
-    const title=String(body.title).trim().slice(0,80), category=String(body.category).trim().slice(0,40), city=String(body.city??"Не указан").trim().slice(0,40), price=Math.max(0,Number(body.price??0)||0), seller=String(body.seller).trim().slice(0,32), contact=String(body.contact).trim().slice(0,40), description=String(body.description??"").trim().slice(0,500), vk=normalizeVk(body.vk);
-    const categoryResult=await pool.query("SELECT id FROM categories WHERE name=$1",[category]);
+    const category=String(body.category??"").trim().slice(0,40);
+    const isSimCard=category==="Сим-Карты";
+
+    // Для SIM-карт обязательны только название/номер, цена, игровой ник.
+    // VK и описание остаются необязательными, а контакт не используется.
+    if(!body.title||!category||!body.seller){
+      return json(res,{error:"Не заполнены обязательные поля."},400);
+    }
+
+    if(!isSimCard && !body.contact){
+      return json(res,{error:"Не заполнены обязательные поля."},400);
+    }
+
+    const title=String(body.title).trim().slice(0,80);
+    const city=isSimCard
+      ? "Не указан"
+      : String(body.city??"Не указан").trim().slice(0,40);
+    const price=Math.max(0,Number(body.price??0)||0);
+    const seller=String(body.seller).trim().slice(0,32);
+    const contact=isSimCard
+      ? ""
+      : String(body.contact).trim().slice(0,40);
+    const description=String(body.description??"").trim().slice(0,500);
+    const vk=normalizeVk(body.vk);
+
+    const categoryResult=await pool.query(
+      "SELECT id FROM categories WHERE name=$1",
+      [category]
+    );
     const categoryRow=categoryResult.rows[0];
-    if(!categoryRow) return json(res,{error:"Неизвестная категория."},400);
-    let userResult=await pool.query("SELECT id FROM users WHERE nickname=$1",[seller]);
+
+    if(!categoryRow){
+      return json(res,{error:"Неизвестная категория."},400);
+    }
+
+    let userResult=await pool.query(
+      "SELECT id FROM users WHERE nickname=$1",
+      [seller]
+    );
     let user=userResult.rows[0];
+
     if(!user){
-      userResult=await pool.query(`INSERT INTO users (nickname,role) VALUES ($1,'player') ON CONFLICT (nickname) DO UPDATE SET nickname=EXCLUDED.nickname RETURNING id`,[seller]);
+      userResult=await pool.query(
+        `INSERT INTO users (nickname,role)
+         VALUES ($1,'player')
+         ON CONFLICT (nickname) DO UPDATE SET nickname=EXCLUDED.nickname
+         RETURNING id`,
+        [seller]
+      );
       user=userResult.rows[0];
     }
-    if(!user) return json(res,{error:"Не удалось создать пользователя."},500);
-    const result=await pool.query(`INSERT INTO ads (user_id,title,category_id,city,price,description,contact,vk,status,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW()+INTERVAL '7 days') RETURNING id`,[user.id,title,categoryRow.id,city,price,description,contact,vk]);
-    return json(res,{ok:true,adId:Number(result.rows[0].id),status:"pending"},201);
-  } catch(error){ console.error("[Titanium Market] POST /api/ads:",error); return json(res,{error:"Не удалось создать объявление."},500); }
+
+    if(!user){
+      return json(res,{error:"Не удалось создать пользователя."},500);
+    }
+
+    const result=await pool.query(
+      `INSERT INTO ads
+       (user_id,title,category_id,city,price,description,contact,vk,status,expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'pending',NOW()+INTERVAL '7 days')
+       RETURNING id`,
+      [user.id,title,categoryRow.id,city,price,description,contact,vk]
+    );
+
+    return json(
+      res,
+      {ok:true,adId:Number(result.rows[0].id),status:"pending"},
+      201
+    );
+  } catch(error){
+    console.error("[Titanium Market] POST /api/ads:",error);
+    return json(res,{error:"Не удалось создать объявление."},500);
+  }
 });
 
 app.post("/api/ads/report",async(req,res)=>{
