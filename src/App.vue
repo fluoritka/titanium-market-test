@@ -128,6 +128,7 @@ const minPrice=ref(""); const maxPrice=ref(""); const sort=ref("newest");
 const ads=ref<Ad[]>([]); const loading=ref(true); const apiOnline=ref(false);
 const showRules=ref(false); const showCreate=ref(false); const showReport=ref<Ad|null>(null); const reportText=ref(""); const reportNick=ref("");
 const showMediaLogin=ref(false); const showMediaPanel=ref(false); const mediaError=ref(""); const mediaUser=ref(""); const mediaRole=ref<"admin"|"root"|"">(""); const isAdmin=ref(false); const logScope=ref("own");
+const showUserAuth=ref(false); const userAuthMode=ref<"login"|"register">("login"); const userError=ref(""); const userAuthBusy=ref(false); const userNickname=ref(""); const userPassword=ref(""); const userPasswordRepeat=ref(""); const currentUser=ref<{nickname:string;role:string}|null>(null); const showCabinet=ref(false); const myAds=ref<any[]>([]); const myAdsLoading=ref(false); const editingOwnAdId=ref<number|null>(null);
 const mediaStatus=ref<Status|"all">("pending"); const mediaAds=ref<Ad[]>([]); const reports=ref<Report[]>([]); const logs=ref<Log[]>([]); const stats=ref<Record<string,number>>({});
 const editAd=ref<Ad|null>(null); const editForm=ref<any>({}); const rejectAdTarget=ref<Ad|null>(null); const rejectReason=ref("");
 
@@ -162,6 +163,231 @@ function formatDate(dateStr: string) {
 function money(v:number){return v?`${new Intl.NumberFormat("ru-RU").format(v)} $`:"Договорная";}
 async function loadAds(){loading.value=true;try{const r=await fetch("/api/ads");const d=await r.json();ads.value=d.ads??[];apiOnline.value=r.ok;}catch{apiOnline.value=false;ads.value=[];}finally{loading.value=false;}}
 async function checkSession(openPanel=false){try{const r=await fetch("/api/media/me");const d=await r.json();if(d.authenticated){mediaUser.value=d.user.nickname;mediaRole.value=d.user.role;isAdmin.value=true;if(openPanel){showMediaPanel.value=true;await loadMedia();}}else{isAdmin.value=false;mediaUser.value="";mediaRole.value="";}}catch{isAdmin.value=false;}}
+
+async function checkUserSession(){
+  try{
+    const r=await fetch("/api/user/me");
+    const d=await r.json();
+    currentUser.value=d.authenticated?d.user:null;
+    if(currentUser.value) userNickname.value=currentUser.value.nickname;
+  }catch{currentUser.value=null;}
+}
+
+async function openUserAccount(){
+  userError.value="";
+  await checkUserSession();
+  if(currentUser.value){
+    showCabinet.value=true;
+    await loadMyAds();
+  }else{
+    showUserAuth.value=true;
+    userAuthMode.value="login";
+  }
+}
+
+async function loadMyAds(){
+  if(!currentUser.value)return;
+  myAdsLoading.value=true;
+  try{
+    const r=await fetch("/api/user/ads");
+    const d=await r.json();
+    if(!r.ok){
+      if(r.status===401){currentUser.value=null;showCabinet.value=false;showUserAuth.value=true;}
+      else alert(d?.error||"Не удалось загрузить объявления.");
+      return;
+    }
+    myAds.value=d.ads??[];
+  }catch{alert("Не удалось подключиться к серверу.");}
+  finally{myAdsLoading.value=false;}
+}
+
+async function submitUserAuth(){
+  userError.value="";
+  userAuthBusy.value=true;
+  try{
+    const endpoint=userAuthMode.value==="login"?"/api/user/login":"/api/user/register";
+    const payload=userAuthMode.value==="login"
+      ? {nickname:userNickname.value,password:userPassword.value}
+      : {nickname:userNickname.value,password:userPassword.value,passwordRepeat:userPasswordRepeat.value};
+    const r=await fetch(endpoint,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
+    const d=await r.json().catch(()=>null);
+    if(!r.ok){userError.value=d?.error||"Не удалось выполнить операцию.";return;}
+    currentUser.value=d.user;
+    userPassword.value="";
+    userPasswordRepeat.value="";
+    showUserAuth.value=false;
+    showCabinet.value=true;
+    await loadMyAds();
+  }catch{userError.value="Не удалось подключиться к серверу.";}
+  finally{userAuthBusy.value=false;}
+}
+
+async function logoutUser(){
+  await fetch("/api/user/logout",{method:"POST"}).catch(()=>{});
+  currentUser.value=null;
+  myAds.value=[];
+  showCabinet.value=false;
+  showUserAuth.value=false;
+  userPassword.value="";
+  userPasswordRepeat.value="";
+}
+
+function formatUserDate(value:string|null|undefined){return value?formatDate(value):"—";}
+
+async function extendMyAd(ad:any){
+  const r=await fetch(`/api/user/ads/${ad.id}/extend`,{method:"POST"});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok){alert(d?.error||"Не удалось продлить объявление.");return;}
+  await loadMyAds();
+}
+
+async function republishMyAd(ad:any){
+  if(!confirm(`Отправить «${ad.title}» на повторную проверку СМИ?`))return;
+  const r=await fetch(`/api/user/ads/${ad.id}/republish`,{method:"POST"});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok){alert(d?.error||"Не удалось отправить объявление на повторную проверку.");return;}
+  await loadMyAds();
+  await loadAds();
+}
+
+async function deleteMyAd(ad:any){
+  if(!confirm(`Удалить объявление «${ad.title}» навсегда?`))return;
+  const r=await fetch(`/api/user/ads/${ad.id}`,{method:"DELETE"});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok){alert(d?.error||"Не удалось удалить объявление.");return;}
+  await loadMyAds();
+  await loadAds();
+}
+
+function openCreateModal(){
+  editingOwnAdId.value=null;
+  showCreate.value=true;
+}
+
+function closeCreateModal(){
+  const wasEditing=editingOwnAdId.value!==null;
+  showCreate.value=false;
+  editingOwnAdId.value=null;
+  if(wasEditing){
+    resetCreateForm();
+    if(currentUser.value){
+      showCabinet.value=true;
+      void loadMyAds();
+    }
+  }
+}
+
+function ownEditBaseTitle(ad:any){
+  let title=stripDealPrefix(ad.title);
+  if(ad.category==="Сим-Карты") title=title.replace(/^сим-карту\s+/i,"").trim();
+  return title;
+}
+
+function openOwnAdEdit(ad:any){
+  if(!currentUser.value)return;
+  if(!["approved","rejected"].includes(ad.status)){
+    alert("Это объявление сейчас нельзя редактировать.");
+    return;
+  }
+
+  const clean=displayDescription(ad.description);
+  const lines=clean.split("\n");
+  const getLine=(label:string)=>lines.find(x=>x.toLowerCase().startsWith(label.toLowerCase()+" - "))?.replace(/^.*? - /,"").replace(/;$/,"" )||"";
+  const generatedPrefixes=["Тюнинг","Ускорение","Скорость","Номер дома","Район"];
+  const manual=lines.filter(line=>!generatedPrefixes.some(prefix=>line.toLowerCase().startsWith(prefix.toLowerCase()+" - "))).join("\n").trim();
+  const dealType=/^Куплю\s+/i.test(ad.title)?"Покупка":"Продажа";
+
+  form.value={
+    title:ownEditBaseTitle(ad),
+    category:ad.category,
+    dealType,
+    city:["Работа","Услуги","Сим-Карты"] .includes(ad.category)?"":ad.city,
+    price:String(ad.price??""),
+    seller:currentUser.value.nickname,
+    contact:ad.contact||"",
+    description:manual,
+    vk:getVkLink(ad).replace(/^https?:\/\/vk\.com\//i,""),
+    tuning:ad.category==="Автомобили"?(getLine("Тюнинг")?`[${getLine("Тюнинг")}]`:""):"",
+    accelerationStage:ad.category==="Автомобили"?(getLine("Ускорение")?`${getLine("Ускорение")}/3`:""):"",
+    speedStage:ad.category==="Автомобили"?(getLine("Скорость")?`${getLine("Скорость")}/3`:""):"",
+    district:(ad.category==="Недвижимость"||ad.category==="Бизнесы")?getLine("Район"):"",
+    houseNumber:ad.category==="Недвижимость"?getLine("Номер дома"):""
+  };
+
+  autoGeneratedDescription.value="";
+  manualDescription.value=manual;
+  rebuildAutoDescription();
+  editingOwnAdId.value=ad.id;
+  showCabinet.value=false;
+  showCreate.value=true;
+}
+
+async function updateMyAd(){
+  if(editingOwnAdId.value===null)return;
+  if(!form.value.title||!form.value.seller)return;
+  if(form.value.category!=="Сим-Карты"&&!form.value.contact)return;
+
+  const normalizedVk=normalizeVk(form.value.vk);
+  let description=form.value.description.slice(0,500);
+  if(normalizedVk){
+    const username=normalizedVk.replace(/^https?:\/\/vk\.com\//i,"");
+    const marker=`[[VK:/${username}]]`;
+    description=description.replace(/\s*\[\[VK:\/[^\]\s]+\]\]/gi,"").trim();
+    description=description?`${description}\n${marker}`:marker;
+  }
+
+  const payload={
+    ...form.value,
+    title:applyDealPrefix(form.value.title,form.value.dealType,form.value.category),
+    price:Number(form.value.price||0),
+    description,
+    vk:normalizedVk,
+    seller:currentUser.value?.nickname||form.value.seller
+  };
+
+  if(payload.category!=="Автомобили"){
+    delete (payload as any).tuning;
+    delete (payload as any).accelerationStage;
+    delete (payload as any).speedStage;
+  }
+  if(payload.category!=="Недвижимость"&&payload.category!=="Бизнесы"){
+    delete (payload as any).district;
+    delete (payload as any).houseNumber;
+  }
+  if(payload.category==="Сим-Карты"){
+    delete (payload as any).city;
+  }
+
+  try{
+    const r=await fetch(`/api/user/ads/${editingOwnAdId.value}`,{
+      method:"PATCH",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    const d=await r.json().catch(()=>null);
+    if(!r.ok){alert(d?.error||"Не удалось отправить изменения на проверку.");return;}
+    const wasId=editingOwnAdId.value;
+    editingOwnAdId.value=null;
+    showCreate.value=false;
+    resetCreateForm();
+    await loadMyAds();
+    await loadAds();
+    showCabinet.value=true;
+    alert(`Изменения в объявлении #${wasId} отправлены на повторную проверку СМИ.`);
+  }catch(error){
+    console.error("updateMyAd:",error);
+    alert("Не удалось подключиться к серверу.");
+  }
+}
+
+async function submitAdForm(){
+  if(editingOwnAdId.value!==null){
+    await updateMyAd();
+    return;
+  }
+  await createAd();
+}
+
 function tuningText(value:string){return value.replace(/^\[|\]$/g,"");}
 function dealPrefix(value:string){return value==="Покупка" ? "Куплю" : "Продам";}
 function stripDealPrefix(value:string){return String(value||"").replace(/^(Продам|Куплю)\s+/i,"").trim();}
@@ -235,7 +461,7 @@ function chooseCategory(category:string){
   form.value.category=category;
   form.value.tuning=""; form.value.accelerationStage=""; form.value.speedStage=""; form.value.district=""; form.value.houseNumber=""; form.value.dealType="Продажа";
   
-  if(category==="Недвижимость" || category==="Бизнесы" || category==="Сим-Карты" || category==="Другое"){
+  if(category==="Недвижимость" || category==="Бизнесы" || category==="Сим-Карты" || category==="Другое" || category==="Работа" || category==="Услуги"){
     form.value.city="";
   } else {
     if(!form.value.city) form.value.city="Los Santos";
@@ -299,7 +525,6 @@ async function createAd(){
 
   if(payload.category==="Сим-Карты"){
     delete (payload as any).city;
-    delete (payload as any).contact;
   }
 
   try{
@@ -448,13 +673,13 @@ async function deleteAd(ad:Ad){if(!confirm(`Удалить объявление 
 async function reportAd(){if(!showReport.value||!reportText.value.trim())return;const r=await fetch("/api/ads/report",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({adId:showReport.value.id,reporter:reportNick.value||"Аноним",reason:reportText.value})});if(r.ok){showReport.value=null;reportText.value="";reportNick.value="";alert("Жалоба отправлена в СМИ.");}else alert((await r.json().catch(()=>null))?.error||"Ошибка");}
 async function resolveReport(id:number,action:"resolve"|"dismiss"){await fetch("/api/media/reports/resolve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id,action})});await loadMedia();}
 async function logoutMedia(){await fetch("/api/media/logout",{method:"POST"}).catch(()=>{});showMediaPanel.value=false;showMediaLogin.value=false;mediaUser.value="";mediaRole.value="";isAdmin.value=false;mediaAds.value=[];localStorage.removeItem("tm_media_panel");}
-onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&localStorage.getItem("tm_media_panel")==="1"){showMediaPanel.value=true;await loadMedia();}});
+onMounted(async()=>{await loadAds();await checkSession(false);await checkUserSession();if(isAdmin.value&&localStorage.getItem("tm_media_panel")==="1"){showMediaPanel.value=true;await loadMedia();}});
 </script>
 
 <template>
 <div class="app-shell">
 <header class="topbar"><div class="brand"><div class="brand-mark"><img src="/logo.png" alt="Titanium Market"></div><div><div class="brand-title">TITANIUM MARKET</div><div class="brand-subtitle">Официальная доска объявлений штата</div></div></div>
-<div class="top-actions"><button class="media-link" @click="showRules=true">Правила</button><button class="media-link" @click="showMediaPanel?showMediaPanel=false:openMediaLogin()">Панель СМИ</button><button class="btn btn-primary" @click="showCreate=true">+ Подать объявление</button></div></header>
+<div class="top-actions"><button class="media-link" @click="showRules=true">Правила</button><button class="media-link" @click="showMediaPanel?showMediaPanel=false:openMediaLogin()">Панель СМИ</button><button class="account-link" @click="openUserAccount" style="min-height: 44px !important; padding: 12px 17px !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; box-sizing: border-box !important;">{{currentUser ? currentUser.nickname : "Войти"}}</button><button class="btn btn-primary" @click="openCreateModal">+ Подать объявление</button></div></header>
 <main>
 <section class="hero"><div><div class="eyebrow">ЭЛЕКТРОННАЯ ПЛОЩАДКА ШТАТА</div><h1>Найди. Купи.<br><span>Продай.</span></h1><p>Автомобили, недвижимость, работа, услуги и готовый бизнес — всё в одном месте.</p></div><div class="hero-stat"><strong>{{filteredAds.length}}</strong><span>доступных объявлений</span></div></section>
 <section class="controls"><div class="search"><span>⌕</span><input v-model="search" placeholder="Поиск по названию, нику, городу или описанию..."></div><div class="filter-row"><select v-model="activeDealType"><option value="Все">Все</option><option value="Продам">Продам</option><option value="Куплю">Куплю</option></select><input v-model="minPrice" type="number" min="0" placeholder="Цена от"><input v-model="maxPrice" type="number" min="0" placeholder="Цена до"><select v-model="sort"><option value="newest">Сначала новые</option><option value="priceAsc">Сначала дешёвые</option><option value="priceDesc">Сначала дорогие</option></select></div><div class="categories"><button v-for="category in categories" :key="category" :class="{active:activeCategory===category}" @click="activeCategory=category">{{category}}</button></div></section>
@@ -463,22 +688,50 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
 </main>
 <footer><span>TITANIUM MARKET</span><span>Официальная электронная площадка объявлений</span></footer>
 
-<div v-if="showRules" class="modal-backdrop" @click.self="showRules=false"><section class="modal rules-modal"><div class="modal-head"><div><div class="section-kicker">ПРАВИЛА ПЛОЩАДКИ</div><h2>Правила Titanium Market</h2></div><button type="button" class="close" @click="showRules=false">×</button></div><div class="rules-content"><div class="rules-block"><h3>✅ Разрешено</h3><ul><li>Размещать объявления о продаже и покупке автомобилей, недвижимости, бизнеса, работе и услугах.</li><li>Указывать актуальную и достоверную информацию.</li><li>Использовать корректные цены и контактные данные.</li><li>Размещать несколько объявлений, если они относятся к разным предложениям.</li></ul></div><div class="rules-block"><h3>❌ Запрещено</h3><ul><li>Ложная или вводящая в заблуждение информация.</li><li>Спам и одинаковые объявления.</li><li>Оскорбления, угрозы и провокации.</li><li>Реклама сторонних проектов без разрешения администрации.</li><li>Размещение объявлений не по соответствующей категории.</li><li>Любые предложения, нарушающие правила сервера.</li></ul></div></div></section></div>
+<div v-if="showUserAuth" class="modal-backdrop" @click.self="showUserAuth=false">
+  <form class="modal account-modal" @submit.prevent="submitUserAuth">
+    <div class="modal-head"><div><div class="section-kicker">ЛИЧНЫЙ КАБИНЕТ</div><h2>{{userAuthMode==="login" ? "Вход" : "Регистрация"}}</h2></div><button type="button" class="close" @click="showUserAuth=false">×</button></div>
+    <div class="account-tabs"><button type="button" :class="{active:userAuthMode==='login'}" @click="userAuthMode='login';userError=''">Войти</button><button type="button" :class="{active:userAuthMode==='register'}" @click="userAuthMode='register';userError=''">Регистрация</button></div>
+    <label>Игровой ник<input v-model="userNickname" required maxlength="32" placeholder="Nick_Name"></label>
+    <label>Пароль<input v-model="userPassword" required type="password" minlength="6" placeholder="Минимум 6 символов"></label>
+    <label v-if="userAuthMode==='register'">Повторите пароль<input v-model="userPasswordRepeat" required type="password" minlength="6" placeholder="Повторите пароль"></label>
+    <div v-if="userError" class="login-error">{{userError}}</div>
+    <button class="btn btn-primary submit" :disabled="userAuthBusy">{{userAuthBusy ? "Подождите..." : (userAuthMode==="login" ? "Войти" : "Зарегистрироваться")}}</button>
+    <div class="login-hint">Сессия сохраняется на этом устройстве на 30 дней.</div>
+  </form>
+</div>
 
-<div v-if="showCreate" class="modal-backdrop modal-form-backdrop" @click.self="showCreate=false">
+<div v-if="showCabinet" class="modal-backdrop panel-backdrop" @click.self="showCabinet=false">
+  <section class="media-panel account-panel">
+    <div class="panel-header"><div><div class="section-kicker">ЛИЧНЫЙ КАБИНЕТ</div><h2>{{currentUser?.nickname}}</h2></div><div class="panel-actions"><button class="btn btn-secondary" @click="loadMyAds">Обновить</button><button class="btn btn-secondary" @click="logoutUser">Выйти</button><button class="btn btn-secondary" @click="showCabinet=false">Свернуть</button></div></div>
+    <div class="account-summary"><strong>{{myAds.length}}</strong><span>Ваших объявлений</span></div>
+    <div v-if="myAdsLoading" class="empty panel-empty">Загружаем ваши объявления...</div>
+    <div v-else-if="myAds.length" class="account-list">
+      <article v-for="ad in myAds" :key="ad.id" class="account-card">
+        <div class="account-card-main"><div class="card-top"><span class="tag">{{ad.category}}</span><span class="date">{{formatDate(ad.createdAt)}}</span></div><h3>{{ad.title}}</h3><div class="moderation-price">{{money(ad.price)}}</div><div class="account-meta"><span :class="`account-status status-${ad.status}`">{{ad.status==='approved'?'Опубликовано':ad.status==='pending'?'На проверке':ad.status==='expired'?'Истекло':ad.status==='rejected'?'Отклонено':'В архиве'}}</span><span v-if="ad.expiresAt">До: {{formatUserDate(ad.expiresAt)}}</span></div><p>{{displayDescription(ad.description)}}</p></div>
+        <div class="account-card-actions"><button v-if="ad.status==='approved'||ad.status==='rejected'" class="action-edit" @click="openOwnAdEdit(ad)" style="border-radius: 999px !important; padding: 9px 14px !important; font-size: 14px !important; min-height: 40px !important;">✎ Редактировать</button><button v-if="ad.status==='approved'" class="action-edit" :disabled="!ad.canExtend" @click="extendMyAd(ad)" style="border-radius: 999px !important; padding: 9px 14px !important; font-size: 14px !important; min-height: 40px !important;">{{ad.canExtend?'Продлить на 5 дней':`Доступно с ${formatUserDate(ad.extendAvailableAt)}`}}</button><button v-if="ad.status==='expired'" class="action-edit" @click="republishMyAd(ad)" style="border-radius: 999px !important; padding: 9px 14px !important; font-size: 14px !important; min-height: 40px !important;">↻ Опубликовать снова</button><button class="action-edit" @click="deleteMyAd(ad)" style="border-radius: 999px !important; padding: 9px 14px !important; font-size: 14px !important; min-height: 40px !important;">× Удалить</button></div>
+      </article>
+    </div>
+    <div v-else class="empty panel-empty">У вас пока нет объявлений.</div>
+  </section>
+</div>
+
+<div v-if="showRules" class="modal-backdrop rules-backdrop" @click.self="showRules=false"><section class="modal rules-modal"><div class="modal-head"><div><div class="section-kicker">ПРАВИЛА ПЛОЩАДКИ</div><h2>Правила Titanium Market</h2></div><button type="button" class="close" @click="showRules=false">×</button></div><div class="rules-content"><div class="rules-block"><h3>🔐 Личный кабинет</h3><ul><li>В личном кабинете сохраняются ваши объявления, поэтому вы сможете управлять ими, редактировать и повторно публиковать их.</li><li>Без личного кабинета объявление будет опубликовано 7 дней, после чего перестанет отображаться на площадке.</li><li>Для личного кабинета обязательно используйте отдельный пароль, который не совпадает с паролем от вашего игрового аккаунта.</li></ul></div><div class="rules-block"><h3>✅ Разрешено</h3><ul><li>Размещать объявления о продаже и покупке автомобилей, недвижимости, бизнеса, работе и услугах.</li><li>Указывать актуальную и достоверную информацию.</li><li>Использовать корректные цены и контактные данные.</li><li>Размещать несколько объявлений, если они относятся к разным предложениям.</li></ul></div><div class="rules-block"><h3>❌ Запрещено</h3><ul><li>Ложная или вводящая в заблуждение информация.</li><li>Спам и одинаковые объявления.</li><li>Оскорбления, угрозы и провокации.</li><li>Реклама сторонних проектов без разрешения администрации.</li><li>Размещение объявлений не по соответствующей категории.</li><li>Любые предложения, нарушающие правила сервера.</li></ul></div></div></section></div>
+
+<div v-if="showCreate" class="modal-backdrop modal-form-backdrop" @click.self="closeCreateModal">
   <div class="modal-scroll">
-  <form class="modal" @submit.prevent="createAd">
+  <form class="modal" @submit.prevent="submitAdForm">
     <div class="modal-head">
       <div>
-        <div class="section-kicker">НОВОЕ ОБЪЯВЛЕНИЕ</div>
-        <h2>Подать объявление</h2>
+        <div class="section-kicker">{{editingOwnAdId !== null ? "РЕДАКТИРОВАНИЕ ОБЪЯВЛЕНИЯ" : "НОВОЕ ОБЪЯВЛЕНИЕ"}}</div>
+        <h2>{{editingOwnAdId !== null ? "Редактировать объявление" : "Подать объявление"}}</h2>
       </div>
-      <button type="button" class="close" @click="showCreate=false">×</button>
+      <button type="button" class="close" @click="closeCreateModal">×</button>
     </div>
 
-    <div class="notice">После отправки объявление будет проверено сотрудником СМИ.</div>
+    <div class="notice">{{editingOwnAdId !== null ? "После сохранения изменений объявление снова будет проверено сотрудником СМИ." : "После отправки объявление будет проверено сотрудником СМИ."}}</div>
 
-    <div v-if="form.category!=='Работа' && form.category!=='Другое'" style="margin-top: 16px;">
+    <div v-if="!['Работа','Услуги','Другое'].includes(form.category)" style="margin-top: 16px;">
       <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Тип объявления</label>
       <select v-model="form.dealType" style="font-size: 13px !important;">
         <option value="Продажа">Продажа</option>
@@ -583,7 +836,7 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
       </div>
     </template>
 
-    <template v-else>
+    <template v-else-if="!['Работа','Услуги'].includes(form.category)">
       <div style="margin-top: 16px;">
         <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Город</label>
         <select v-model="form.city" style="font-size: 13px !important;">
@@ -596,6 +849,13 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
       </div>
     </template>
 
+    <template v-else>
+      <div style="margin-top: 16px;">
+        <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Название</label>
+        <input v-model="form.title" required maxlength="80" :placeholder="form.category==='Работа' ? 'Что предлагает игрок...' : 'Какую услугу предлагает игрок...'" style="font-size: 13px !important;">
+      </div>
+    </template>
+
     <div class="form-row" style="margin-top: 16px;">
       <div>
         <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Цена</label>
@@ -603,11 +863,15 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
       </div>
       <div>
         <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Игровой ник</label>
-        <input v-model="form.seller" required maxlength="32" placeholder="Nick_Name" style="font-size: 13px !important;">
+        <input v-model="form.seller" required maxlength="32" placeholder="Nick_Name" :readonly="editingOwnAdId !== null" style="font-size: 13px !important;">
       </div>
     </div>
 
-    <div v-if="form.category!=='Сим-Карты'" style="margin-top: 16px;">
+    <div v-if="form.category==='Сим-Карты'" style="margin-top: 16px;">
+      <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Номер телефона</label>
+      <input v-model="form.contact" required maxlength="40" placeholder="555-1234" style="font-size: 13px !important;">
+    </div>
+    <div v-else style="margin-top: 16px;">
       <label style="font-size: 13px !important; font-weight: 600 !important; color: #8b909b !important; margin-bottom: 6px !important; display: block !important;">Контакт</label>
       <input v-model="form.contact" required maxlength="40" placeholder="555-1234" style="font-size: 13px !important;">
     </div>
@@ -622,7 +886,7 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
       <textarea v-model="form.description" @input="onDescriptionInput" rows="4" maxlength="500" placeholder="Расскажите подробнее..." style="font-size: 13px !important;"></textarea>
     </div>
 
-    <button class="btn btn-primary submit" type="submit" style="margin-top: 24px;">Отправить на проверку</button>
+    <button class="btn btn-primary submit" type="submit" style="margin-top: 24px;">{{editingOwnAdId !== null ? "Отправить изменения на проверку" : "Отправить на проверку"}}</button>
   </form>
   </div>
 </div>
@@ -643,7 +907,7 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
   <div class="modal-scroll">
   <form class="modal" @submit.prevent="saveEdit"><div class="modal-head"><div><div class="section-kicker">MODERATION</div><h2>Редактирование #{{editAd.id}}</h2></div><button type="button" class="close" @click="editAd=null">×</button></div>
 <label>Название<input v-model="editForm.title" required maxlength="80"></label>
-<div class="form-row"><label>Категория<select v-model="editForm.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label v-if="editForm.category!=='Автомобили'">Город<select v-model="editForm.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div>
+<div class="form-row"><label>Категория<select v-model="editForm.category"><option v-for="c in categories.slice(1)" :key="c">{{c}}</option></select></label><label v-if="!['Автомобили','Работа','Услуги','Сим-Карты'].includes(editForm.category)">Город<select v-model="editForm.city"><option v-for="c in cities.slice(1)" :key="c">{{c}}</option></select></label></div>
 <div v-if="['Автомобили','Недвижимость','Бизнесы','Сим-Карты'].includes(editForm.category)" style="margin-top: 12px;">
   <label>Тип объявления<select v-model="editForm.dealType"><option value="Продажа">Продажа</option><option value="Покупка">Покупка</option></select></label>
 </div>
@@ -664,7 +928,8 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
   </div>
 </template>
 <div class="form-row"><label>Игровой ник<input v-model="editForm.seller" maxlength="32"></label><label>Цена<input v-model="editForm.price" type="number" min="0"></label></div>
-<label v-if="editForm.category!=='Сим-Карты'">Контакт<input v-model="editForm.contact" maxlength="40"></label>
+<label v-if="editForm.category==='Сим-Карты'">Номер телефона<input v-model="editForm.contact" required maxlength="40" placeholder="555-1234"></label>
+<label v-else>Контакт<input v-model="editForm.contact" maxlength="40"></label>
 <label>VK <span style="font-weight: 400; color: #626772;">необязательно</span><input v-model="editForm.vk" maxlength="120" placeholder="username"></label>
 <label>Описание<textarea v-model="editForm.description" rows="5" maxlength="500"></textarea></label>
 <button class="btn btn-primary submit">Сохранить изменения</button></form>
@@ -675,7 +940,22 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
 </div>
 </template>
 <style>
-/* Scroll only inside the create/edit modal content, while keeping the modal centered. */
+/* Keep modal scrolling usable while completely hiding native scrollbars. */
+.modal-form-backdrop,
+.modal-form-backdrop .modal-scroll,
+.modal-form-backdrop .modal {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+.modal-form-backdrop::-webkit-scrollbar,
+.modal-form-backdrop .modal-scroll::-webkit-scrollbar,
+.modal-form-backdrop .modal::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
 .modal-form-backdrop {
   overflow: hidden !important;
 }
@@ -690,33 +970,64 @@ onMounted(async()=>{await loadAds();await checkSession(false);if(isAdmin.value&&
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  overflow-y: auto;
-  overflow-x: hidden;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
   padding: 16px;
-  scrollbar-width: thin;
-  scrollbar-color: #4b4f58 transparent;
 }
 
 .modal-form-backdrop .modal-scroll > .modal {
   flex: 0 0 auto;
   margin-left: auto !important;
   margin-right: auto !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
 
-.modal-form-backdrop .modal-scroll::-webkit-scrollbar {
-  width: 7px;
+/* Personal cabinet / media panel */
+.panel-backdrop {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+.panel-backdrop::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+.account-panel {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+.account-panel::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
-.modal-form-backdrop .modal-scroll::-webkit-scrollbar-track {
-  background: transparent;
+/* Rules */
+.rules-backdrop {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
 }
-
-.modal-form-backdrop .modal-scroll::-webkit-scrollbar-thumb {
-  background: #4b4f58;
-  border-radius: 10px;
+.rules-backdrop::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
-
-.modal-form-backdrop .modal-scroll::-webkit-scrollbar-thumb:hover {
-  background: #ff7a1a;
+.rules-backdrop .rules-modal {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+.rules-backdrop .rules-modal::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 </style>

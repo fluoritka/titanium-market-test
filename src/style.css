@@ -730,4 +730,193 @@ footer {
   text-decoration: none !important;
   line-height: 1 !important;
 }
+
+/* Titanium Market — кастомный скроллбар */
+html,
+body,
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #4b4f58 #0b0d10;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  background: #0b0d10;
+  border-radius: 10px;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  background: #4b4f58;
+  border-radius: 10px;
+  border: 2px solid #0b0d10;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a;
+}
+
+.modal {
+  scrollbar-width: thin;
+  scrollbar-color: #4b4f58 transparent;
+}
+
+.modal::-webkit-scrollbar {
+  width: 7px;
+}
+
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal::-webkit-scrollbar-thumb {
+  background: #4b4f58;
+  border-radius: 10px;
+}
+
+.modal::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a;
+}
+
+/* Скроллбар окон подачи объявления и редактирования */
+.modal-backdrop,
+.panel-backdrop,
+.modal,
+.media-panel {
+  scrollbar-width: thin;
+  scrollbar-color: #4b4f58 transparent;
+}
+
+/* Chrome / Edge */
+.modal-backdrop::-webkit-scrollbar,
+.panel-backdrop::-webkit-scrollbar,
+.modal::-webkit-scrollbar,
+.media-panel::-webkit-scrollbar {
+  width: 7px;
+}
+
+.modal-backdrop::-webkit-scrollbar-track,
+.panel-backdrop::-webkit-scrollbar-track,
+.modal::-webkit-scrollbar-track,
+.media-panel::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.modal-backdrop::-webkit-scrollbar-thumb,
+.panel-backdrop::-webkit-scrollbar-thumb,
+.modal::-webkit-scrollbar-thumb,
+.media-panel::-webkit-scrollbar-thumb {
+  background: #4b4f58;
+  border-radius: 10px;
+}
+
+.modal-backdrop::-webkit-scrollbar-thumb:hover,
+.panel-backdrop::-webkit-scrollbar-thumb:hover,
+.modal::-webkit-scrollbar-thumb:hover,
+.media-panel::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a;
+}
+
+/* ===== СКРОЛЛБАР МОДАЛЬНЫХ ОКОН ===== */
+
+.modal-backdrop {
+  scrollbar-width: thin !important;
+  scrollbar-color: #4b4f58 #0b0d10 !important;
+}
+
+/* Chrome / Edge */
+.modal-backdrop::-webkit-scrollbar {
+  width: 8px !important;
+  height: 8px !important;
+}
+
+.modal-backdrop::-webkit-scrollbar-track {
+  background: #0b0d10 !important;
+  border-radius: 10px !important;
+}
+
+.modal-backdrop::-webkit-scrollbar-thumb {
+  background: #4b4f58 !important;
+  border-radius: 10px !important;
+  border: 1px solid #0b0d10 !important;
+}
+
+.modal-backdrop::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a !important;
+}
+
+/* На случай, если скролл находится у самого окна */
+.modal {
+  scrollbar-width: thin !important;
+  scrollbar-color: #4b4f58 #0b0d10 !important;
+}
+
+.modal::-webkit-scrollbar {
+  width: 8px !important;
+}
+
+.modal::-webkit-scrollbar-track {
+  background: #0b0d10 !important;
+}
+
+.modal::-webkit-scrollbar-thumb {
+  background: #4b4f58 !important;
+  border-radius: 10px !important;
+  border: 1px solid #0b0d10 !important;
+}
+
+.modal::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a !important;
+}
+}
+
+
+/* Personal account / user cabinet */
+.account-link {
+  background: transparent;
+  border: 1px solid #242934;
+  color: #aeb3bf;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font: inherit;
+  cursor: pointer;
+  transition: .2s ease;
+}
+.account-link:hover { border-color: #ff7a1a; color: #fff; }
+.account-modal { width: min(520px, calc(100vw - 32px)); }
+.account-tabs { display:flex; gap:8px; margin: 4px 0 18px; }
+.account-tabs button { flex:1; background:#0b0d10; border:1px solid #242934; color:#8e94a0; border-radius:10px; padding:11px 14px; font:inherit; cursor:pointer; }
+.account-tabs button.active { background:#ff7a1a; border-color:#ff7a1a; color:#fff; }
+.account-panel { max-width: 980px; }
+.account-summary { display:flex; align-items:baseline; gap:10px; margin: 0 0 20px; padding:16px 18px; border:1px solid #242934; border-radius:14px; background:#0b0d10; }
+.account-summary strong { font-size:28px; color:#fff; }
+.account-summary span { color:#777e8b; }
+.account-list { display:grid; gap:12px; }
+.account-card { display:flex; justify-content:space-between; gap:18px; padding:18px; border:1px solid #242934; border-radius:14px; background:#0d0f13; }
+.account-card-main { min-width:0; flex:1; }
+.account-card h3 { margin:10px 0 5px; }
+.account-meta { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0; color:#777e8b; font-size:13px; }
+.account-status { display:inline-flex; border-radius:999px; padding:5px 9px; font-weight:600; }
+.status-approved { background:#113322; color:#47db8a; }
+.status-pending { background:#332b12; color:#f0c25b; }
+.status-expired { background:#352023; color:#ff8a8a; }
+.status-rejected { background:#352023; color:#ff8a8a; }
+.status-archived { background:#252932; color:#9da3af; }
+.account-card-actions { width:260px; display:flex; flex-direction:column; justify-content:center; gap:8px; }
+.account-card-actions button { width:100%; }
+.account-card-actions button:disabled { opacity:.55; cursor:not-allowed; }
+@media (max-width: 820px) {
+  .account-card { flex-direction:column; }
+  .account-card-actions { width:100%; }
 }
